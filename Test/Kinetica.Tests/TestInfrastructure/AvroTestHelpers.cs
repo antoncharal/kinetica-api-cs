@@ -73,5 +73,22 @@ namespace Kinetica.Tests.TestInfrastructure
             };
             return BuildOkResponse("show_system_properties_response", Encode(inner));
         }
+
+        /// <summary>
+        /// Build an Avro-encoded <see cref="RawKineticaResponse"/> with an ERROR status
+        /// and the given message — the format used by the Kinetica error envelope.
+        /// </summary>
+        public static byte[] BuildErrorResponse(string message)
+        {
+            var raw = new RawKineticaResponse
+            {
+                status   = "ERROR",
+                message  = message,
+                data_type = "",
+                data     = Array.Empty<byte>(),
+                data_str = ""
+            };
+            return Encode(raw);
+        }
     }
 }

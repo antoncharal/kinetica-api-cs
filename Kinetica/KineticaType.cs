@@ -166,7 +166,7 @@ namespace kinetica
                 {
                     if (response.type_ids[i] != typeId)
                     {
-                        throw new KineticaException("Table {tableName} is not homogeneous.");
+                        throw new KineticaException($"Table {tableName} is not homogeneous.");
                     }
                 }
             }
