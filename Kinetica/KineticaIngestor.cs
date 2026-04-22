@@ -61,7 +61,6 @@ namespace kinetica
         private Utils.RecordKeyBuilder<T>? shardKeyBuilder;
         private IList<int>? routingTable;
         private IList<Utils.WorkerQueue<T>> workerQueues;
-        private Random random;
 
 
         /// <summary>
@@ -170,8 +169,6 @@ namespace kinetica
                 throw new KineticaException( ex.ToString() );
             }
 
-            // Create the random number generator
-            this.random = new( (int) DateTime.Now.Ticks );
         }   // end constructor KineticaIngestor
 
 
@@ -214,7 +211,7 @@ namespace kinetica
             if (this.routingTable == null)
                 return this.workerQueues[0];
             if (shardKey == null)
-                return this.workerQueues[random.Next(this.workerQueues.Count)];
+                return this.workerQueues[Random.Shared.Next(this.workerQueues.Count)];
 
             return this.workerQueues[shardKey.route(this.routingTable)];
         }
@@ -476,7 +473,16 @@ namespace kinetica
                 tasks.Add(InsertBucketAsync(workerIndex, bucketRecords, gate, exceptions, cancellationToken));
             }
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException oce)
+            {
+                if (!exceptions.IsEmpty)
+                    throw new AggregateException(exceptions.Prepend(oce));
+                throw;
+            }
 
             if (!exceptions.IsEmpty)
                 throw new AggregateException(exceptions);
