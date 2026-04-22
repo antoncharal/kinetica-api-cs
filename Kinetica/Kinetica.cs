@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 /// \mainpage Introduction
 ///
@@ -227,6 +228,37 @@ namespace kinetica
         }  // end AddTableType
 
         /// <summary>
+        /// Async overload of <see cref="AddTableType"/>.
+        /// </summary>
+        /// <param name="table_name">The table to discover the type from.</param>
+        /// <param name="obj_type">The CLR type to associate with the discovered Kinetica type.</param>
+        /// <param name="cancellationToken">Token to cancel the async operation.</param>
+        public async Task AddTableTypeAsync(
+            string table_name,
+            Type obj_type,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var ktype = await KineticaType.FromTableAsync(this, table_name, cancellationToken)
+                    .ConfigureAwait(false);
+                if (ktype.getTypeID() == null)
+                    throw new KineticaException($"Could not get type ID for table '{table_name}'");
+                this.knownTypes.TryAdd(ktype.getTypeID(), ktype);
+                if (obj_type != null)
+                    this.SetKineticaSourceClassToTypeMapping(obj_type, ktype);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // propagate unwrapped
+            }
+            catch (KineticaException ex)
+            {
+                throw new KineticaException("Error creating type from table", ex);
+            }
+        }  // end AddTableTypeAsync
+
+        /// <summary>
         /// Saves an object class type to a KineticaType association.  If the class type already exists
         /// in the map, replaces the old KineticaType value.
         /// </summary>
@@ -407,31 +439,9 @@ namespace kinetica
         /// <returns>Response Object</returns>
         internal TResponse SubmitRequest<TResponse>( Uri url, object request, bool enableCompression = false, bool avroEncoding = true ) where TResponse : new()
         {
-            // Get the bytes to send, encoded in the requested way
-            byte[] requestBytes;
-            if ( avroEncoding )
-            {
-                requestBytes = AvroEncode( request );
-            }
-            else // JSON
-            {
-                string str = JsonConvert.SerializeObject(request);
-                requestBytes = Encoding.UTF8.GetBytes( str );
-            }
-
-            // Send request, and receive response
-            RawKineticaResponse kineticaResponse = SubmitRequestRaw( url.ToString(), requestBytes, enableCompression, avroEncoding, false);
-
-            // Decode response payload
-            if ( avroEncoding )
-            {
-                return AvroDecode<TResponse>( kineticaResponse.data );
-            }
-            else // JSON
-            {
-                kineticaResponse.data_str = kineticaResponse.data_str.Replace( "\\U", "\\u" );
-                return JsonConvert.DeserializeObject<TResponse>( kineticaResponse.data_str );
-            }
+            var requestBytes = EncodeRequest( request, avroEncoding );
+            var raw = SubmitRequestRaw( url.ToString(), requestBytes, enableCompression, avroEncoding, false );
+            return DecodeKineticaResponse<TResponse>( raw, avroEncoding );
         }  // end SubmitRequest( URL )
 
 
@@ -446,31 +456,9 @@ namespace kinetica
         /// <returns>Response Object</returns>
         private TResponse SubmitRequest<TResponse>(string endpoint, object request, bool enableCompression = false, bool avroEncoding = true) where TResponse : new()
         {
-            // Get the bytes to send, encoded in the requested way
-            byte[] requestBytes;
-            if (avroEncoding)
-            {
-                requestBytes = AvroEncode(request);
-            }
-            else // JSON
-            {
-                string str = JsonConvert.SerializeObject(request);
-                requestBytes = Encoding.UTF8.GetBytes(str);
-            }
-
-            // Send request, and receive response
-            RawKineticaResponse kineticaResponse = SubmitRequestRaw(endpoint, requestBytes, enableCompression, avroEncoding);
-
-            // Decode response payload
-            if (avroEncoding)
-            {
-                return AvroDecode<TResponse>(kineticaResponse.data);
-            }
-            else // JSON
-            {
-                kineticaResponse.data_str = kineticaResponse.data_str.Replace("\\U", "\\u");
-                return JsonConvert.DeserializeObject<TResponse>(kineticaResponse.data_str);
-            }
+            var requestBytes = EncodeRequest( request, avroEncoding );
+            var raw = SubmitRequestRaw( endpoint, requestBytes, enableCompression, avroEncoding );
+            return DecodeKineticaResponse<TResponse>( raw, avroEncoding );
         }  // end SubmitRequest( endpoint )
 
 
@@ -521,6 +509,99 @@ namespace kinetica
 
             var s = Encoding.UTF8.GetString(bytes).Replace("\\U", "\\u");
             return JsonConvert.DeserializeObject<RawKineticaResponse>(s);
+        }
+
+        private byte[] EncodeRequest(object request, bool avroEncoding)
+        {
+            if (avroEncoding)
+                return AvroEncode(request);
+            return Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(request));
+        }
+
+        private TResponse DecodeKineticaResponse<TResponse>(RawKineticaResponse? raw, bool avroEncoding) where TResponse : new()
+        {
+            if (avroEncoding)
+                return AvroDecode<TResponse>(raw!.data);
+            var s = raw!.data_str.Replace("\\U", "\\u");
+            return JsonConvert.DeserializeObject<TResponse>(s)!;
+        }
+
+        // -------------------------------------------------------------------------
+        // Async core
+        // -------------------------------------------------------------------------
+
+        private async Task<RawKineticaResponse?> SubmitRequestRawAsync(
+            string url,
+            byte[] requestBytes,
+            bool enableCompression,
+            bool avroEncoding,
+            bool only_endpoint_given = true,
+            CancellationToken cancellationToken = default)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(Kinetica));
+
+            if (only_endpoint_given)
+                url = Url + url;
+
+            var contentType = avroEncoding ? "application/octet-stream" : "application/json";
+
+            try
+            {
+                var responseBytes = await _transport
+                    .PostAsync(url, requestBytes, contentType, Authorization, cancellationToken)
+                    .ConfigureAwait(false);
+                return DecodeResponse(responseBytes, avroEncoding);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // propagate unwrapped — matches .NET convention
+            }
+            catch (KineticaTransportException ex)
+            {
+                var errorEnvelope = DecodeResponse(ex.Body, avroEncoding);
+                throw new KineticaException(errorEnvelope?.message ?? ex.Message);
+            }
+            catch (Exception ex) when (ex is not KineticaException)
+            {
+                throw new KineticaException(ex.ToString(), ex);
+            }
+        }
+
+        /// <summary>
+        /// Async overload for direct-URL requests (used by multi-head ingest / retriever).
+        /// </summary>
+        internal async Task<TResponse> SubmitRequestAsync<TResponse>(
+            Uri url,
+            object request,
+            bool enableCompression = false,
+            bool avroEncoding = true,
+            CancellationToken cancellationToken = default) where TResponse : new()
+        {
+            var requestBytes = EncodeRequest(request, avroEncoding);
+            var raw = await SubmitRequestRawAsync(
+                url.ToString(), requestBytes, enableCompression, avroEncoding, false, cancellationToken)
+                .ConfigureAwait(false);
+            return DecodeKineticaResponse<TResponse>(raw, avroEncoding);
+        }
+
+        /// <summary>
+        /// Async overload for endpoint-based requests.
+        /// Pattern for the schema generator to target in PR-06.
+        /// </summary>
+        internal async Task<TResponse> SubmitRequestAsync<TResponse>(
+            string endpoint,
+            object request,
+            bool enableCompression = false,
+            bool avroEncoding = true,
+            CancellationToken cancellationToken = default) where TResponse : new()
+        {
+            var requestBytes = EncodeRequest(request, avroEncoding);
+            var raw = await SubmitRequestRawAsync(
+                endpoint, requestBytes, enableCompression, avroEncoding,
+                cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            return DecodeKineticaResponse<TResponse>(raw, avroEncoding);
         }
 
         public void Dispose()
