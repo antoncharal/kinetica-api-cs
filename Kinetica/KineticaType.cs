@@ -14,13 +14,13 @@ namespace kinetica
         {
             public enum ColumnType
             {
-                BYTES = Avro.EnumSchema.Type.Bytes,
-                DOUBLE = Avro.EnumSchema.Type.Double,
-                FLOAT = Avro.EnumSchema.Type.Float,
-                INT = Avro.EnumSchema.Type.Int,
-                LONG = Avro.EnumSchema.Type.Long,
-                STRING = Avro.EnumSchema.Type.String,
-                DEFAULT = Avro.EnumSchema.Type.Error
+                BYTES = Schema.Type.Bytes,
+                DOUBLE = Schema.Type.Double,
+                FLOAT = Schema.Type.Float,
+                INT = Schema.Type.Int,
+                LONG = Schema.Type.Long,
+                STRING = Schema.Type.String,
+                DEFAULT = Schema.Type.Error
             };
 
             private string m_name;
