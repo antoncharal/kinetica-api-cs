@@ -8,9 +8,9 @@ using Newtonsoft.Json.Linq;
 
 namespace kinetica
 {
-    public class KineticaType
+    public sealed class KineticaType
     {
-        public class Column
+        public sealed class Column
         {
             public enum ColumnType
             {

@@ -15,10 +15,10 @@ namespace kinetica
     /// method to ensure that all queued records have been inserted.
     /// </summary>
     /// <typeparam name="T">The type of object being inserted.</typeparam>
-    public class RecordRetriever<T> where T : new()
+    public sealed class RecordRetriever<T> where T : new()
     {
 
-        public Kinetica KineticaDb { get; }
+        internal Kinetica KineticaDb { get; }
         public string TableName { get; }
 
         [Obsolete("Use KineticaDb instead.")]
@@ -90,7 +90,7 @@ namespace kinetica
                 }
                 else // multihead-ingest is NOT turned on; use the regular Kinetica IP address
                 {
-                    string get_records_url_str = ( kdb.URL.ToString() + "get/records" );
+                    string get_records_url_str = ( kdb.Uri.ToString() + "get/records" );
                     System.Uri url = new System.Uri( get_records_url_str );
                     Utils.WorkerQueue<T> worker_queue = new Utils.WorkerQueue<T>( url );
                     this.worker_queues.Add(worker_queue);
@@ -143,8 +143,8 @@ namespace kinetica
             decoded_response.has_more_records        = raw_response.has_more_records;
             decoded_response.total_number_of_records = raw_response.total_number_of_records;
 
-            kineticaDB.DecodeRawBinaryDataUsingRecordType(
-                ktype, raw_response.records_binary, decoded_response.data);
+            decoded_response.data = new List<T>(
+                kineticaDB.DecodeRawBinaryDataUsingRecordType<T>( ktype, raw_response.records_binary ) );
 
             return decoded_response;
         }

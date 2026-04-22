@@ -38,7 +38,7 @@ namespace kinetica
     /// <summary>
     /// API to talk to Kinetica Database
     /// </summary>
-    public partial class Kinetica : IDisposable
+    public sealed partial class Kinetica : IDisposable
     {
         private bool _disposed;
         /// <summary>
@@ -85,10 +85,20 @@ namespace kinetica
             private int _threadCount = 1;
 
             /// <summary>
-            /// Optional: HTTP request timeout in seconds. Defaults to 100, matching
-            /// the previous <c>HttpWebRequest.Timeout</c> default.
+            /// Optional: HTTP request timeout in seconds. Must be &gt; 0 when specified.
+            /// Defaults to 100 seconds (matching the previous <c>HttpWebRequest.Timeout</c> default).
             /// </summary>
-            public int? TimeoutSeconds { get; set; }
+            public int? TimeoutSeconds
+            {
+                get => _timeoutSeconds;
+                set
+                {
+                    if ( value.HasValue )
+                        ArgumentOutOfRangeException.ThrowIfNegativeOrZero( value.Value, nameof( TimeoutSeconds ) );
+                    _timeoutSeconds = value;
+                }
+            }
+            private int? _timeoutSeconds;
         }
 
         /// <summary>
@@ -98,14 +108,22 @@ namespace kinetica
         public static string GetApiVersion() { return API_VERSION; }
 
         /// <summary>
-        /// URL for Kinetica Server (including "http:" and port) as a string
+        /// The server endpoint as a <see cref="System.Uri"/>.
         /// </summary>
-        public string Url { get; private set; }
+        public Uri Uri { get; private set; }
 
         /// <summary>
-        /// URL for Kinetica Server (including "http:" and port)
+        /// The server endpoint as a string.
         /// </summary>
-        public Uri URL { get; private set; }
+        public string UrlString => Uri.ToString();
+
+        /// <inheritdoc cref="Uri"/>
+        [Obsolete("Use Uri instead.")]
+        public Uri URL => Uri;
+
+        /// <inheritdoc cref="UrlString"/>
+        [Obsolete("Use UrlString instead.")]
+        public string Url => UrlString;
 
         /// <summary>
         /// Optional: User Name for Kinetica security
@@ -164,25 +182,10 @@ namespace kinetica
         /// <param name="url">URL for Kinetica Server (including "http:" and port)</param>
         /// <param name="options">Optional connection options</param>
         public Kinetica( string url, Options? options = null )
-        {
-            Url = url;
-            URL = new Uri( url );
-            _transport = new HttpClientTransport(
-                TimeSpan.FromSeconds( options?.TimeoutSeconds ?? 100 ) );
-            if ( null != options ) // If caller specified options
-            {
-                Username = options.Username;
-                Password = options.Password;
-                OauthToken = options.OauthToken;
-
-                // Handle authorization
-                Authorization = CreateAuthorizationHeader();
-
-                UseSnappy = options.UseSnappy;
-                ThreadCount = options.ThreadCount;
-                // TODO: executor?
-            }
-        }
+            : this( url,
+                    new HttpClientTransport(
+                        TimeSpan.FromSeconds( options?.TimeoutSeconds ?? 100 ) ),
+                    options ) { }
 
         /// <summary>
         /// Test constructor — accepts an injected <see cref="IHttpTransport"/>
@@ -190,8 +193,7 @@ namespace kinetica
         /// </summary>
         internal Kinetica( string url, IHttpTransport transport, Options? options = null )
         {
-            Url = url;
-            URL = new Uri( url );
+            Uri = new Uri( url );
             _transport = transport;
             if ( null != options )
             {
@@ -199,6 +201,10 @@ namespace kinetica
                 Password = options.Password;
                 OauthToken = options.OauthToken;
                 Authorization = CreateAuthorizationHeader();
+                // Clear plaintext credentials immediately after the Authorization header
+                // is built — they are not needed beyond this point.
+                Password = null;
+                OauthToken = null;
                 UseSnappy = options.UseSnappy;
                 ThreadCount = options.ThreadCount;
             }
@@ -297,18 +303,26 @@ namespace kinetica
         /// <typeparam name="T">The type of the records.</typeparam>
         /// <param name="record_type">The type for the records.</param>
         /// <param name="records_binary">The binary encoded data to be decoded.</param>
-        /// <param name="records">The decoded objects/records.</param>
+        /// <returns>The decoded objects/records.</returns>
+        public IReadOnlyList<T> DecodeRawBinaryDataUsingRecordType<T>( KineticaType record_type,
+                                                                        IList<byte[]> records_binary ) where T : new()
+        {
+            var records = new List<T>( records_binary.Count );
+            foreach ( var bin_record in records_binary )
+                records.Add( AvroDecode<T>( bin_record, record_type ) );
+            return records;
+        }  // DecodeRawBinaryDataUsingRecordType
+
+        /// <inheritdoc cref="DecodeRawBinaryDataUsingRecordType{T}(KineticaType, IList{byte[]})"/>
+        /// <param name="records">Pre-allocated list to populate.</param>
+        [Obsolete("Use the overload that returns IReadOnlyList<T> instead.")]
         public void DecodeRawBinaryDataUsingRecordType<T>( KineticaType record_type,
                                                            IList<byte[]> records_binary,
                                                            IList<T> records ) where T : new()
         {
-            // Using the KineticaType object, decode all the records from avro binary encoding
-            foreach ( var bin_record in records_binary )
-            {
-                T obj = AvroDecode<T>( bin_record, record_type );
-                records.Add( obj );
-            }
-        }  // DecodeRawBinaryDataUsingRecordType
+            foreach ( var decoded in DecodeRawBinaryDataUsingRecordType<T>( record_type, records_binary ) )
+                records.Add( decoded );
+        }  // DecodeRawBinaryDataUsingRecordType (Obsolete)
 
 
         /// <summary>
@@ -318,131 +332,130 @@ namespace kinetica
         /// <typeparam name="T">The type of the records.</typeparam>
         /// <param name="schema_string">The schema for the records.</param>
         /// <param name="records_binary">The binary encoded data to be decoded.</param>
-        /// <param name="records">The decoded objects/records.</param>
+        /// <returns>The decoded objects/records.</returns>
+        public IReadOnlyList<T> DecodeRawBinaryDataUsingSchemaString<T>( string schema_string,
+                                                                          IList<byte[]> records_binary ) where T : new()
+        {
+            KineticaType ktype = new( "", schema_string, null );
+            var records = new List<T>( records_binary.Count );
+            foreach ( var bin_record in records_binary )
+                records.Add( AvroDecode<T>( bin_record, ktype ) );
+            return records;
+        }  // DecodeRawBinaryDataUsingSchemaString
+
+        /// <inheritdoc cref="DecodeRawBinaryDataUsingSchemaString{T}(string, IList{byte[]})"/>
+        /// <param name="records">Pre-allocated list to populate.</param>
+        [Obsolete("Use the overload that returns IReadOnlyList<T> instead.")]
         public void DecodeRawBinaryDataUsingSchemaString<T>( string schema_string,
                                                              IList<byte[]> records_binary,
                                                              IList<T> records ) where T : new()
         {
-            // Create a KineticaType object based on the schema string
-            KineticaType ktype = new("", schema_string, null);
-
-            // Using the KineticaType object, decode all the records from avro binary encoding
-            foreach ( var bin_record in records_binary )
-            {
-                T obj = AvroDecode<T>( bin_record, ktype );
-                records.Add( obj );
-            }
-        }  // DecodeRawBinaryDataUsingSchemaString
+            foreach ( var decoded in DecodeRawBinaryDataUsingSchemaString<T>( schema_string, records_binary ) )
+                records.Add( decoded );
+        }  // DecodeRawBinaryDataUsingSchemaString (Obsolete)
 
         /// <summary>
-        /// Given a list of schema strings, decode binary data into distinct
-        /// records (objects).
+        /// Given a list of schema strings, decode binary data into distinct records (objects).
         /// </summary>
         /// <typeparam name="T">The type of the records.</typeparam>
         /// <param name="schema_strings">The schemas for the records.</param>
-        /// <param name="lists_records_binary">The binary encoded data to be decoded (the data is
-        /// in a 2D list).</param>
-        /// <param name="record_lists">The decoded objects/records in a 2d list.</param>
+        /// <param name="lists_records_binary">The binary encoded data in a 2D list.</param>
+        /// <returns>The decoded objects/records in a 2D list.</returns>
+        public IReadOnlyList<IReadOnlyList<T>> DecodeRawBinaryDataUsingSchemaString<T>( IList<string> schema_strings,
+                                                                                         IList<IList<byte[]>> lists_records_binary ) where T : new()
+        {
+            if ( schema_strings.Count != lists_records_binary.Count )
+                throw new KineticaException( "List of schemas and list of binary encoded data do not match in count." );
+
+            var record_lists = new List<IReadOnlyList<T>>( schema_strings.Count );
+            for ( int i = 0; i < schema_strings.Count; ++i )
+                record_lists.Add( DecodeRawBinaryDataUsingSchemaString<T>( schema_strings[i], lists_records_binary[i] ) );
+            return record_lists;
+        }  // DecodeRawBinaryDataUsingSchemaString (2D)
+
+        /// <inheritdoc cref="DecodeRawBinaryDataUsingSchemaString{T}(IList{string}, IList{IList{byte[]}})"/>
+        /// <param name="record_lists">Pre-allocated list of lists to populate.</param>
+        [Obsolete("Use the overload that returns IReadOnlyList<IReadOnlyList<T>> instead.")]
         public void DecodeRawBinaryDataUsingSchemaString<T>( IList<string> schema_strings,
                                                              IList<IList<byte[]>> lists_records_binary,
                                                              IList<IList<T>> record_lists ) where T : new()
         {
-            // Check that the list of schemas and list of binary encode data match in length
-            if ( schema_strings.Count != lists_records_binary.Count )
-                throw new KineticaException( "List of schemas and list of binary encoded data do not match in count." );
-
-            // Using the KineticaType object, decode all the records from avro binary encoding
-            for ( int i = 0; i < schema_strings.Count; ++i )
-            {
-                // Create a KineticaType object based on the schema string
-                KineticaType ktype = new( "", schema_strings[ i ], null );
-
-                // Get the binary encoded data for this list
-                IList<byte[]> records_binary = lists_records_binary[ i ];
-
-                // Create a container to put the decoded records
-                IList<T> records = [];
-
-                // The inner list actually contains the binary data
-                foreach ( var bin_record in records_binary )
-                {
-                    T obj = AvroDecode<T>( bin_record, ktype );
-                    records.Add( obj );
-                }
-                // Add the records into the outgoing list
-                record_lists.Add( records );
-            }
-        }  // DecodeRawBinaryDataUsingSchemaString
+            foreach ( var inner in DecodeRawBinaryDataUsingSchemaString<T>( schema_strings, lists_records_binary ) )
+                record_lists.Add( new List<T>( inner ) );
+        }  // DecodeRawBinaryDataUsingSchemaString 2D (Obsolete)
 
 
         /// <summary>
-        /// Given IDs of records types registered with Kinetica, decode binary
-        /// data into distinct records (objects).
+        /// Given IDs of record types registered with Kinetica, decode binary data into distinct
+        /// records (objects).
         /// </summary>
         /// <typeparam name="T">The type of the records.</typeparam>
         /// <param name="type_ids">The IDs for each of the records' types.</param>
         /// <param name="records_binary">The binary encoded data to be decoded.</param>
-        /// <param name="records">The decoded objects/records.</param>
+        /// <returns>The decoded objects/records.</returns>
+        public IReadOnlyList<T> DecodeRawBinaryDataUsingTypeIDs<T>( IList<string> type_ids,
+                                                                     IList<byte[]> records_binary ) where T : new()
+        {
+            if ( type_ids.Count != records_binary.Count )
+                throw new KineticaException( "Unequal numbers of type IDs and binary encoded data objects provided." );
+
+            var records = new List<T>( records_binary.Count );
+            for ( int i = 0; i < records_binary.Count; ++i )
+            {
+                KineticaType ktype = KineticaType.fromTypeID( this, type_ids[ i ] );
+                records.Add( AvroDecode<T>( records_binary[ i ], ktype ) );
+            }
+            return records;
+        }  // DecodeRawBinaryDataUsingTypeIDs
+
+        /// <inheritdoc cref="DecodeRawBinaryDataUsingTypeIDs{T}(IList{string}, IList{byte[]})"/>
+        /// <param name="records">Pre-allocated list to populate.</param>
+        [Obsolete("Use the overload that returns IReadOnlyList<T> instead.")]
         public void DecodeRawBinaryDataUsingTypeIDs<T>( IList<string> type_ids,
                                                         IList<byte[]> records_binary,
                                                         IList<T> records ) where T : new()
         {
-            // Make sure that the length of the type IDs and records are the same
-            if ( type_ids.Count != records_binary.Count )
-                throw new KineticaException( "Unequal numbers of type IDs and binary encoded data objects provided." );
-
-            // Decode all the records
-            for ( int i = 0; i < records_binary.Count; ++i )
-            {
-                // Per object, use the respective type ID to create the appropriate KineticaType
-                KineticaType ktype = KineticaType.fromTypeID( this, type_ids[ i ] );
-
-                // Using the KineticaType object, decode the record.
-                T obj = AvroDecode<T>( records_binary[ i ], ktype );
-                records.Add( obj );
-            }
-        }  // DecodeRawBinaryDataUsingTypeIDs
+            foreach ( var decoded in DecodeRawBinaryDataUsingTypeIDs<T>( type_ids, records_binary ) )
+                records.Add( decoded );
+        }  // DecodeRawBinaryDataUsingTypeIDs (Obsolete)
 
 
         /// <summary>
-        /// Given IDs of records types registered with Kinetica, decode binary
-        /// data into distinct records (objects).
+        /// Given IDs of record types registered with Kinetica, decode binary data into distinct
+        /// records (objects) in a 2D list.
         /// </summary>
         /// <typeparam name="T">The type of the records.</typeparam>
         /// <param name="type_ids">The IDs for each of the lists of records.</param>
-        /// <param name="lists_records_binary">The binary encoded data to be decoded in a 2d list.</param>
-        /// <param name="record_lists">The decoded objects/records in a 2d list.</param>
+        /// <param name="lists_records_binary">The binary encoded data in a 2D list.</param>
+        /// <returns>The decoded objects/records in a 2D list.</returns>
+        public IReadOnlyList<IReadOnlyList<T>> DecodeRawBinaryDataUsingTypeIDs<T>( IList<string> type_ids,
+                                                                                    IList<IList<byte[]>> lists_records_binary ) where T : new()
+        {
+            if ( type_ids.Count != lists_records_binary.Count )
+                throw new KineticaException( "Unequal numbers of type IDs and binary encoded data objects provided." );
+
+            var record_lists = new List<IReadOnlyList<T>>( type_ids.Count );
+            for ( int i = 0; i < lists_records_binary.Count; ++i )
+            {
+                KineticaType ktype = KineticaType.fromTypeID( this, type_ids[ i ] );
+                var records = new List<T>( lists_records_binary[i].Count );
+                foreach ( var bin_record in lists_records_binary[i] )
+                    records.Add( AvroDecode<T>( bin_record, ktype ) );
+                record_lists.Add( records );
+            }
+            return record_lists;
+        }  // DecodeRawBinaryDataUsingTypeIDs (2D)
+
+        /// <inheritdoc cref="DecodeRawBinaryDataUsingTypeIDs{T}(IList{string}, IList{IList{byte[]}})"/>
+        /// <param name="record_lists">Pre-allocated list of lists to populate.</param>
+        [Obsolete("Use the overload that returns IReadOnlyList<IReadOnlyList<T>> instead.")]
         public void DecodeRawBinaryDataUsingTypeIDs<T>( IList<string> type_ids,
                                                         IList<IList<byte[]>> lists_records_binary,
                                                         IList<IList<T>> record_lists ) where T : new()
         {
-            // Make sure that the length of the type IDs and records are the same
-            if ( type_ids.Count != lists_records_binary.Count )
-                throw new KineticaException( "Unequal numbers of type IDs and binary encoded data objects provided." );
-
-            // Decode all the records
-            for ( int i = 0; i < lists_records_binary.Count; ++i )
-            {
-                // Per object, use the respective type ID to create the appropriate KineticaType
-                KineticaType ktype = KineticaType.fromTypeID( this, type_ids[ i ] );
-
-                // Get the binary encoded data for this list
-                IList<byte[]> records_binary = lists_records_binary[ i ];
-
-                // Create a container to put the decoded records
-                IList<T> records = [];
-
-                // The inner list actually contains the binary data
-                foreach ( var bin_record in records_binary )
-                {
-                    // Using the KineticaType object, decode the record.
-                    T obj = AvroDecode<T>( bin_record, ktype );
-                    records.Add( obj );
-                }
-                // Add the records into the outgoing list
-                record_lists.Add( records );
-            }
-        }  // DecodeRawBinaryDataUsingTypeIDs
+            foreach ( var inner in DecodeRawBinaryDataUsingTypeIDs<T>( type_ids, lists_records_binary ) )
+                record_lists.Add( new List<T>( inner ) );
+        }  // DecodeRawBinaryDataUsingTypeIDs 2D (Obsolete)
 
 
         /// <summary>
@@ -508,7 +521,7 @@ namespace kinetica
                 throw new ObjectDisposedException(nameof(Kinetica));
 
             if ( only_endpoint_given )
-                url = (Url + url);
+                url = (UrlString + url);
 
             var contentType = avroEncoding ? "application/octet-stream" : "application/json";
 
@@ -596,7 +609,7 @@ namespace kinetica
                 throw new ObjectDisposedException(nameof(Kinetica));
 
             if (only_endpoint_given)
-                url = Url + url;
+                url = UrlString + url;
 
             var contentType = avroEncoding ? "application/octet-stream" : "application/json";
 
@@ -664,7 +677,6 @@ namespace kinetica
             if (_disposed) return;
             (_transport as IDisposable)?.Dispose();
             _disposed = true;
-            // Defensive: no finalizer today, but a subclass could add one.
             GC.SuppressFinalize(this);
         }
 

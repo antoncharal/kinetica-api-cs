@@ -20,6 +20,14 @@ namespace kinetica
         public KineticaException( string msg, Exception innerException ) :
             base( msg, innerException ) { }
 
+        /// <summary>
+        /// Initialises a <see cref="KineticaException"/> with an HTTP status code and no inner exception.
+        /// </summary>
+        public KineticaException(string msg, int? statusCode) : base(msg)
+        {
+            StatusCode = statusCode;
+        }
+
         public KineticaException(string msg, int? statusCode, Exception? innerException)
             : base(msg, innerException)
         {

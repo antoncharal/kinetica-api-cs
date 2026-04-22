@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -24,10 +24,10 @@ namespace kinetica
     /// </para>
     /// </summary>
     /// <typeparam name="T">The type of object being inserted.</typeparam>
-    public class KineticaIngestor<T>
+    public sealed class KineticaIngestor<T>
     {
         [Serializable]
-        public class InsertException<T> : KineticaException
+        public class InsertException : KineticaException
         {
             public Uri Url { get; private set; }
             public IReadOnlyList<T> Records { get; private set; }
@@ -55,13 +55,18 @@ namespace kinetica
 
         // KineticaIngestor Members:
         // =========================
-        public Kinetica KineticaDb { get; }
+        internal Kinetica KineticaDb { get; }
         public string TableName { get; }
         public int BatchSize { get; }
-        public IDictionary<string, string> Options { get; }
+
+        /// <summary>
+        /// The options passed to the ingestor at construction time. Read-only after construction.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Options => _options;
+        private readonly Dictionary<string, string> _options;
 
         [Obsolete("Use KineticaDb instead.")]
-        public Kinetica kineticaDB => KineticaDb;
+        internal Kinetica kineticaDB => KineticaDb;
 
         [Obsolete("Use TableName instead.")]
         public string table_name => TableName;
@@ -70,7 +75,7 @@ namespace kinetica
         public int batch_size => BatchSize;
 
         [Obsolete("Use Options instead.")]
-        public IDictionary<string, string> options => Options;
+        public IDictionary<string, string> options => _options;
         private long _countInserted;
         private long _countUpdated;
 
@@ -109,7 +114,8 @@ namespace kinetica
                 throw new KineticaException( $"Batch size must be greater than one; given {batchSize}." );
             this.BatchSize = batchSize;
 
-            this.Options = options;
+            // Defensive copy — callers cannot mutate the ingestor's options after construction.
+            _options = options is not null ? new Dictionary<string, string>(options) : [];
 
             // Set up the primary and shard key builders
             // -----------------------------------------
@@ -171,7 +177,7 @@ namespace kinetica
                 }
                 else // multihead-ingest is NOT turned on; use the regular Kinetica IP address
                 {
-                    string strWorkerUrl = kdb.URL.ToString();
+                    string strWorkerUrl = kdb.Uri.ToString();
                     strWorkerUrl = strWorkerUrl.EndsWith('/') ? strWorkerUrl[..^1] : strWorkerUrl;
                     string insertRecordsUrlStr = $"{strWorkerUrl}/insert/records";
                     System.Uri url = new( insertRecordsUrlStr );
@@ -279,7 +285,7 @@ namespace kinetica
                 // Encode the records into binary
                 List<byte[]> encodedQueue = [];
                 foreach ( var record in queue ) encodedQueue.Add( this.KineticaDb.AvroEncode( record ) );
-                RawInsertRecordsRequest request = new( this.TableName, encodedQueue, this.Options);
+                RawInsertRecordsRequest request = new( this.TableName, encodedQueue, this._options);
 
                 InsertRecordsResponse response = new();
 
@@ -298,7 +304,7 @@ namespace kinetica
             }
             catch ( Exception ex )
             {
-                throw new InsertException<T>( url, queue, ex.Message );
+                throw new InsertException( url, queue, ex.Message );
             }
         }  // end private flush()
 
@@ -340,7 +346,7 @@ namespace kinetica
             for ( int i = 0; i < records.Count; ++i )
             {
                 try { this.Insert( records[ i ] ); }
-                catch ( InsertException<T> ex )
+                catch ( InsertException ex )
                 {
                     IList<T> queue = (IList<T>)ex.Records;
                     for ( int j = i + 1; j < records.Count; ++j ) queue.Add( records[ j ] );
@@ -360,7 +366,7 @@ namespace kinetica
                 {
                     this.insert( records[ i ] );
                 }
-                catch ( InsertException<T> ex )
+                catch ( InsertException ex )
                 {
                     // Add the remaining records to the insertion exception
                     // record queue
@@ -456,7 +462,7 @@ namespace kinetica
                 foreach (var record in queue)
                     encodedQueue.Add(this.KineticaDb.AvroEncode(record));
 
-                var request = new RawInsertRecordsRequest(this.TableName, encodedQueue, this.Options);
+                var request = new RawInsertRecordsRequest(this.TableName, encodedQueue, this._options);
 
                 InsertRecordsResponse response;
                 if (url == null)
@@ -485,7 +491,7 @@ namespace kinetica
             }
             catch (Exception ex)
             {
-                throw new InsertException<T>(url, queue, ex.Message);
+                throw new InsertException(url, queue, ex.Message);
             }
         }
 
@@ -601,3 +607,4 @@ namespace kinetica
 
 
 }  // end namespace kinetica
+

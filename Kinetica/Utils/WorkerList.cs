@@ -175,7 +175,7 @@ namespace kinetica.Utils
 
                             if (matching_ip_found)
                             {
-                                UriBuilder uri_builder = new UriBuilder( db.URL.Scheme,
+                                UriBuilder uri_builder = new UriBuilder( db.Uri.Scheme,
                                                                          ip, Int32.Parse(worker_ports[i]) );
                                 Uri url = uri_builder.Uri;
 
