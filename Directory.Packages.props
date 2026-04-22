@@ -2,11 +2,8 @@
 
   <ItemGroup>
     <!-- Core runtime deps -->
+    <PackageVersion Include="Apache.Avro" Version="1.12.1" />
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
-
-    <!-- Avro dependencies -->
-    <PackageVersion Include="log4net" Version="3.0.3" />
-    <PackageVersion Include="System.CodeDom" Version="8.0.0" />
 
     <!-- Example-only -->
     <PackageVersion Include="CommandLineParser" Version="2.9.1" />
