@@ -12,6 +12,15 @@ namespace kinetica
     /// Use the <see cref="insert(record)"/> and <see cref="insert(List)"/>
     /// methods to queue records for insertion, and the <see cref="flush"/>
     /// method to ensure that all queued records have been inserted.
+    /// <para>
+    /// <b>Thread safety:</b> Concurrent calls to <see cref="InsertAsync(T, CancellationToken)"/>
+    /// and <see cref="InsertAsync(IList{T}, CancellationToken)"/> are safe.
+    /// Worker queues are guarded by per-instance locks. Counter reads
+    /// (<see cref="getCountInserted"/>, <see cref="getCountUpdated"/>)
+    /// are atomic at any time. <see cref="FlushAsync"/> is safe to call
+    /// concurrently with inserts, but only one flush executes at a time
+    /// per worker queue.
+    /// </para>
     /// </summary>
     /// <typeparam name="T">The type of object being inserted.</typeparam>
     public class KineticaIngestor<T>
@@ -52,7 +61,6 @@ namespace kinetica
         private Utils.RecordKeyBuilder<T>? shardKeyBuilder;
         private IList<int>? routingTable;
         private IList<Utils.WorkerQueue<T>> workerQueues;
-        private Random random;
 
 
         /// <summary>
@@ -161,8 +169,6 @@ namespace kinetica
                 throw new KineticaException( ex.ToString() );
             }
 
-            // Create the random number generator
-            this.random = new( (int) DateTime.Now.Ticks );
         }   // end constructor KineticaIngestor
 
 
@@ -185,6 +191,29 @@ namespace kinetica
         public Int64 getCountUpdated()
         {
             return System.Threading.Interlocked.Read( ref this.count_updated );
+        }
+
+
+        /// <summary>
+        /// Determines which worker queue a record should be routed to based on
+        /// the shard key and routing table (or random if no key is available).
+        /// </summary>
+        private Utils.WorkerQueue<T> RouteFor(T record, out Utils.RecordKey? primaryKey)
+        {
+            primaryKey = null;
+            Utils.RecordKey? shardKey = null;
+
+            if (this.primaryKeyBuilder != null)
+                primaryKey = this.primaryKeyBuilder.build(record);
+            if (this.shardKeyBuilder != null)
+                shardKey = this.shardKeyBuilder.build(record);
+
+            if (this.routingTable == null)
+                return this.workerQueues[0];
+            if (shardKey == null)
+                return this.workerQueues[Random.Shared.Next(this.workerQueues.Count)];
+
+            return this.workerQueues[shardKey.route(this.routingTable)];
         }
 
 
@@ -266,34 +295,7 @@ namespace kinetica
         /// </exception>
         public void insert( T record )
         {
-            // Create the record keys
-            Utils.RecordKey? primaryKey = null;  // used to check for uniqueness
-            Utils.RecordKey? shardKey = null;    // used to find which worker to send this record to
-
-            // Build the primary key, if any
-            if ( this.primaryKeyBuilder != null )
-                primaryKey = this.primaryKeyBuilder.build( record );
-
-            // Build the shard/routing key, if any
-            if ( this.shardKeyBuilder != null )
-                shardKey = this.shardKeyBuilder.build( record );
-
-            // Find out which worker to send the record to; then add the record
-            // to the appropriate worker's record queue
-            Utils.WorkerQueue<T> workerQueue;
-            if ( this.routingTable == null )
-            {   // no information regarding multiple workers, so get the first/only one
-                workerQueue = this.workerQueues[0];
-            }
-            else if ( shardKey == null )
-            {   // there is no shard/routing key, so get a random worker
-                workerQueue = this.workerQueues[ random.Next( this.workerQueues.Count ) ];
-            }
-            else
-            {   // Get the worker based on the sharding/routing key
-                int worker_index = shardKey.route( this.routingTable );
-                workerQueue = this.workerQueues[worker_index];
-            }
+            var workerQueue = RouteFor(record, out var primaryKey);
 
             // Insert the record into the queue
             IList<T> queue = workerQueue.insert( record, primaryKey );
@@ -428,21 +430,7 @@ namespace kinetica
         /// </summary>
         public async Task InsertAsync(T record, CancellationToken cancellationToken = default)
         {
-            Utils.RecordKey? primaryKey = null;
-            Utils.RecordKey? shardKey   = null;
-
-            if (this.primaryKeyBuilder != null)
-                primaryKey = this.primaryKeyBuilder.build(record);
-            if (this.shardKeyBuilder != null)
-                shardKey = this.shardKeyBuilder.build(record);
-
-            Utils.WorkerQueue<T> workerQueue;
-            if (this.routingTable == null)
-                workerQueue = this.workerQueues[0];
-            else if (shardKey == null)
-                workerQueue = this.workerQueues[random.Next(this.workerQueues.Count)];
-            else
-                workerQueue = this.workerQueues[shardKey.route(this.routingTable)];
+            var workerQueue = RouteFor(record, out var primaryKey);
 
             var queue = workerQueue.insert(record, primaryKey);
             if (queue != null)
@@ -450,22 +438,86 @@ namespace kinetica
         }
 
         /// <summary>
-        /// Queues each record for insertion asynchronously.
+        /// Queues each record for insertion asynchronously with parallel fan-out
+        /// across worker queues. Records are bucketed by their shard-routed worker,
+        /// then each bucket is inserted concurrently with bounded parallelism.
+        /// On partial failure, throws <see cref="AggregateException"/> containing
+        /// one <see cref="InsertException{T}"/> per failed bucket.
         /// </summary>
         public async Task InsertAsync(IList<T> records, CancellationToken cancellationToken = default)
         {
-            for (int i = 0; i < records.Count; ++i)
+            if (records.Count == 0)
+                return;
+
+            // Bucket records per worker queue.
+            var buckets = new Dictionary<int, List<T>>();
+            foreach (var record in records)
             {
-                try
+                var workerQueue = RouteFor(record, out _);
+                int index = this.workerQueues.IndexOf(workerQueue);
+                if (!buckets.TryGetValue(index, out var list))
+                    buckets[index] = list = [];
+                list.Add(record);
+            }
+
+            // Fan out per bucket with bounded concurrency.
+            var maxConcurrency = Math.Min(buckets.Count, Environment.ProcessorCount);
+            using var gate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+            var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+            var tasks = new List<Task>(buckets.Count);
+            foreach (var kvp in buckets)
+            {
+                var workerIndex = kvp.Key;
+                var bucketRecords = kvp.Value;
+                tasks.Add(InsertBucketAsync(workerIndex, bucketRecords, gate, exceptions, cancellationToken));
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException oce)
+            {
+                if (!exceptions.IsEmpty)
+                    throw new AggregateException(exceptions.Prepend(oce));
+                throw;
+            }
+
+            if (!exceptions.IsEmpty)
+                throw new AggregateException(exceptions);
+        }
+
+        private async Task InsertBucketAsync(
+            int workerIndex,
+            List<T> records,
+            SemaphoreSlim gate,
+            System.Collections.Concurrent.ConcurrentBag<Exception> exceptions,
+            CancellationToken cancellationToken)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var workerQueue = this.workerQueues[workerIndex];
+                foreach (var record in records)
                 {
-                    await InsertAsync(records[i], cancellationToken).ConfigureAwait(false);
+                    Utils.RecordKey? primaryKey = this.primaryKeyBuilder?.build(record);
+                    var flushed = workerQueue.insert(record, primaryKey);
+                    if (flushed != null)
+                        await FlushAsync(flushed, workerQueue.url, cancellationToken).ConfigureAwait(false);
                 }
-                catch (InsertException<T> ex)
-                {
-                    for (int j = i + 1; j < records.Count; ++j)
-                        ex.records.Add(records[j]);
-                    throw;
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // let Task.WhenAll handle cancellation
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+            finally
+            {
+                gate.Release();
             }
         }
 
