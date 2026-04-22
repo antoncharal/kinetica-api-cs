@@ -7,5 +7,9 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="Test/Kinetica.Tests/Kinetica.Tests.csproj" />
+    <Project Path="Test/Kinetica.IntegrationTests/Kinetica.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="Test/Kinetica.Benchmarks/Kinetica.Benchmarks.csproj" />
   </Folder>
 </Solution>

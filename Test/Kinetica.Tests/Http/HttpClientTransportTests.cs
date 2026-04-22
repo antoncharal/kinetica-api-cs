@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
+using System.Threading.Tasks;
 using Kinetica.Tests.TestInfrastructure;
 using kinetica;
 using Shouldly;
@@ -191,6 +192,111 @@ public sealed class HttpClientTransportTests
     }
 
     // =========================================================================
+    // Async path — PostAsync
+    // =========================================================================
+
+    [Fact]
+    public async Task PostAsync_Success_ReturnsResponseBytes()
+    {
+        var expected = new byte[] { 0xCA, 0xFE };
+        using var handler = new StaticResponseHandler(expected, HttpStatusCode.OK);
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        var result = await transport.PostAsync("http://localhost:9191/test",
+            Array.Empty<byte>(), "application/octet-stream", null, CancellationToken.None);
+
+        result.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task PostAsync_500Response_ThrowsKineticaTransportException_WithBody()
+    {
+        var errorBody = new byte[] { 0x01, 0x02, 0x03 };
+        using var handler = new StaticResponseHandler(errorBody, HttpStatusCode.InternalServerError);
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        var ex = await Should.ThrowAsync<KineticaTransportException>(
+            () => transport.PostAsync("http://localhost:9191/test",
+                Array.Empty<byte>(), "application/json", null, CancellationToken.None));
+
+        ex.StatusCode.ShouldBe(500);
+        ex.Body.ShouldBe(errorBody);
+    }
+
+    [Fact]
+    public async Task PostAsync_PreCancelledToken_ThrowsOperationCanceledException()
+    {
+        using var handler = new StaticResponseHandler(Array.Empty<byte>(), HttpStatusCode.OK);
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => transport.PostAsync("http://localhost:9191/test",
+                Array.Empty<byte>(), "application/json", null, cts.Token));
+    }
+
+    [Fact]
+    public async Task PostAsync_CancelDuringSend_PropagatesOperationCanceledException()
+    {
+        using var cts = new CancellationTokenSource();
+        using var handler = new CancellingHandler(cts);
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => transport.PostAsync("http://localhost:9191/test",
+                Array.Empty<byte>(), "application/json", null, cts.Token));
+    }
+
+    [Fact]
+    public async Task PostAsync_SetsAuthorizationHeader_WhenProvided()
+    {
+        HttpRequestMessage? captured = null;
+        using var handler = new CapturingHandler(req => captured = req, Array.Empty<byte>());
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        await transport.PostAsync("http://localhost:9191/test",
+            Array.Empty<byte>(), "application/json", "Bearer my-async-token", CancellationToken.None);
+
+        captured!.Headers.Authorization!.Scheme.ShouldBe("Bearer");
+        captured.Headers.Authorization.Parameter.ShouldBe("my-async-token");
+    }
+
+    [Fact]
+    public async Task PostAsync_SetsContentTypeHeader_FromParameter()
+    {
+        HttpRequestMessage? captured = null;
+        using var handler = new CapturingHandler(req => captured = req, Array.Empty<byte>());
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        await transport.PostAsync("http://localhost:9191/test",
+            new byte[] { 0x01 }, "application/octet-stream", null, CancellationToken.None);
+
+        captured!.Content!.Headers.ContentType!.MediaType.ShouldBe("application/octet-stream");
+    }
+
+    [Fact]
+    public async Task PostAsync_UsesHttpVersion11()
+    {
+        HttpRequestMessage? captured = null;
+        using var handler = new CapturingHandler(req => captured = req, Array.Empty<byte>());
+        using var httpClient = new HttpClient(handler);
+        using var transport = new HttpClientTransport(httpClient);
+
+        await transport.PostAsync("http://localhost:9191/test",
+            Array.Empty<byte>(), "application/json", null, CancellationToken.None);
+
+        captured!.Version.ShouldBe(HttpVersion.Version11);
+    }
+
+    // =========================================================================
     // Private test handlers
     // =========================================================================
 
@@ -273,5 +379,62 @@ public sealed class HttpClientTransportTests
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(Send(request, cancellationToken));
+    }
+
+    /// <summary>Invokes a callback then returns a fixed response — for tracking invocation.</summary>
+    private sealed class CallbackHandler : HttpMessageHandler
+    {
+        private readonly Action<HttpRequestMessage> _callback;
+        private readonly byte[] _responseBody;
+
+        public CallbackHandler(Action<HttpRequestMessage> callback, byte[] responseBody)
+        {
+            _callback     = callback;
+            _responseBody = responseBody;
+        }
+
+        protected override HttpResponseMessage Send(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _callback(request);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(_responseBody),
+            };
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _callback(request);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(_responseBody),
+            });
+        }
+    }
+
+    /// <summary>Cancels the provided CTS during SendAsync, simulating mid-flight cancellation.</summary>
+    private sealed class CancellingHandler : HttpMessageHandler
+    {
+        private readonly CancellationTokenSource _cts;
+
+        public CancellingHandler(CancellationTokenSource cts) => _cts = cts;
+
+        protected override HttpResponseMessage Send(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _cts.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _cts.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
     }
 }
