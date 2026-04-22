@@ -1,6 +1,7 @@
 ﻿using Avro;
 using Avro.IO;
 using Avro.Specific;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -33,7 +34,7 @@ namespace kinetica
         /// <param name="type">Type received from Kinetica Server</param>
         public KineticaData(KineticaType type)
         {
-            m_schema = Avro.Schema.Parse(type.getSchemaString()) as RecordSchema;
+            m_schema = Avro.Schema.Parse(NormalizeSchemaJson(type.getSchemaString())) as RecordSchema;
             m_properties = this.GetType().GetProperties();
         }
 
@@ -66,6 +67,16 @@ namespace kinetica
         public void Put(int fieldPos, object fieldValue)
         {
             m_properties[fieldPos].SetValue(this, fieldValue);
+        }
+
+        /// <summary>
+        /// Normalizes a schema JSON string to deterministic form (no extra whitespace)
+        /// to minimize risk of parsing differences between Avro library versions.
+        /// </summary>
+        private static string NormalizeSchemaJson(string schemaJson)
+        {
+            var token = JToken.Parse(schemaJson);
+            return token.ToString(Newtonsoft.Json.Formatting.None);
         }
 
        private static string? GetEmbeddedSchema( Type t) {
