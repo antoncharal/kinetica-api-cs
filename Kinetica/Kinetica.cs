@@ -647,6 +647,8 @@ namespace kinetica
             if (_disposed) return;
             (_transport as IDisposable)?.Dispose();
             _disposed = true;
+            // Defensive: no finalizer today, but a subclass could add one.
+            GC.SuppressFinalize(this);
         }
 
         private void SetDecoderIfMissing(string typeId, string label, string schemaString, IDictionary<string, IList<string>> properties)
