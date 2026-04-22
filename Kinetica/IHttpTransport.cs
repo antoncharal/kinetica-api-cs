@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace kinetica
 {
@@ -9,23 +10,15 @@ namespace kinetica
     internal interface IHttpTransport
     {
         /// <summary>
-        /// POST <paramref name="body"/> to <paramref name="url"/> and return
-        /// the raw response bytes on success.
+        /// Synchronous POST.  Blocks the calling thread until the response is received.
         /// </summary>
-        /// <param name="url">Fully-qualified URL to POST to.</param>
-        /// <param name="body">Request body bytes.</param>
-        /// <param name="contentType">Value for the Content-Type header.</param>
-        /// <param name="authorization">Optional Authorization header value
-        /// (e.g. "Basic …" or "Bearer …").  Omitted when null.</param>
-        /// <param name="cancellationToken">Token to cancel the request.</param>
-        /// <returns>Raw response body bytes.</returns>
-        /// <exception cref="KineticaTransportException">
-        /// Thrown when the server returns a non-2xx status code.  Carries the
-        /// raw response body so <see cref="Kinetica"/> can decode the error envelope.
-        /// </exception>
-        /// <exception cref="KineticaException">
-        /// Thrown on network-level failure.
-        /// </exception>
         byte[] Post(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Asynchronous POST.  Returns a task that completes when the response is received.
+        /// <para>Cancellation is honoured at the socket level — the returned task throws
+        /// <see cref="OperationCanceledException"/> when the token fires.</para>
+        /// </summary>
+        Task<byte[]> PostAsync(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken);
     }
 }

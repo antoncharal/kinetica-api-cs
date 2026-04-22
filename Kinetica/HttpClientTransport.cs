@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace kinetica
 {
@@ -54,6 +55,28 @@ namespace kinetica
             using var request = BuildRequest(url, body, contentType, authorization);
             using var response = _client.Send(request, cancellationToken);
             return ReadOrThrow(response, cancellationToken);
+        }
+
+        public async Task<byte[]> PostAsync(
+            string url,
+            byte[] body,
+            string contentType,
+            string? authorization,
+            CancellationToken cancellationToken)
+        {
+            using var request = BuildRequest(url, body, contentType, authorization);
+            using var response = await _client
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            var bytes = await response.Content
+                .ReadAsByteArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+                return bytes;
+
+            throw new KineticaTransportException((int)response.StatusCode, bytes);
         }
 
         private static HttpRequestMessage BuildRequest(

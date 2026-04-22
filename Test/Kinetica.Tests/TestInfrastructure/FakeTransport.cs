@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using kinetica;
 
 namespace Kinetica.Tests.TestInfrastructure
@@ -34,6 +35,13 @@ namespace Kinetica.Tests.TestInfrastructure
                 throw ThrowOnPost;
 
             return ResponseBytes;
+        }
+
+        public Task<byte[]> PostAsync(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken)
+        {
+            // ThrowIfCancellationRequested before recording to mirror real transport behaviour.
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(Post(url, body, contentType, authorization, cancellationToken));
         }
     }
 }
