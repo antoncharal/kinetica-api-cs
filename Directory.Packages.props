@@ -28,6 +28,9 @@
 
     <!-- Benchmarking -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
+
+    <!-- Analyzers (library-only; PrivateAssets=all at reference site) -->
+    <PackageVersion Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.11.20" />
   </ItemGroup>
 
 </Project>

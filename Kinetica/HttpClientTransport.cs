@@ -65,6 +65,10 @@ namespace kinetica
             CancellationToken cancellationToken)
         {
             using var request = BuildRequest(url, body, contentType, authorization);
+            // Intent: ResponseHeadersRead lets us inspect status/headers before reading
+            // the body; the body itself is always fully buffered because Kinetica response
+            // envelopes are Avro/JSON blobs that must be parsed as a whole — not streams.
+            // Do not "optimize" this to stream-decode without changing the envelope contract.
             using var response = await _client
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);

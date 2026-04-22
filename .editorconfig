@@ -39,3 +39,17 @@ dotnet_naming_style.begins_with_i.capitalization = pascal_case
 dotnet_diagnostic.CA1305.severity = none
 dotnet_diagnostic.CA1307.severity = none
 dotnet_diagnostic.CA2007.severity = none
+
+# PR-10: Async discipline — ship as errors in library.
+# VSTHRD002: Avoid .Result / .Wait — deadlock risk.
+dotnet_diagnostic.VSTHRD002.severity = error
+# VSTHRD110: Observe the result of async calls.
+dotnet_diagnostic.VSTHRD110.severity = error
+# VSTHRD111: Use .ConfigureAwait(bool) — every await site.
+dotnet_diagnostic.VSTHRD111.severity = error
+# VSTHRD200: "Async" suffix — naming convention, informational.
+dotnet_diagnostic.VSTHRD200.severity = suggestion
+
+# PR-10: Disposable hygiene.
+# CA1816: Call GC.SuppressFinalize(this) in Dispose.
+dotnet_diagnostic.CA1816.severity = error
