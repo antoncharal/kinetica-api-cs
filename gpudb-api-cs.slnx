@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="Avro/Avro.csproj" />
+    <Project Path="Kinetica/Kinetica.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="Example/Example.csproj" />
+  </Folder>
+</Solution>
