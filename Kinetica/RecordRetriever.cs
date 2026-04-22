@@ -18,8 +18,14 @@ namespace kinetica
     public class RecordRetriever<T> where T : new()
     {
 
-        public Kinetica kineticaDB { get; }
-        public string table_name { get; }
+        public Kinetica KineticaDb { get; }
+        public string TableName { get; }
+
+        [Obsolete("Use KineticaDb instead.")]
+        public Kinetica kineticaDB => KineticaDb;
+
+        [Obsolete("Use TableName instead.")]
+        public string table_name => TableName;
         private KineticaType ktype;
         private Utils.RecordKeyBuilder<T> shard_key_builder;
         private IList<int> routing_table;
@@ -37,8 +43,8 @@ namespace kinetica
                                 KineticaType ktype,
                                 Utils.WorkerList workers = null)
         {
-            this.kineticaDB = kdb;
-            this.table_name = table_name;
+            this.KineticaDb = kdb;
+            this.TableName = table_name;
             this.ktype = ktype;
 
             // Set up the shard key builder
@@ -122,7 +128,7 @@ namespace kinetica
             if (this.routing_table != null)
             {
                 Utils.RecordKey shard_key = this.shard_key_builder.build(record);
-                workerUrl = this.worker_queues[shard_key.route(this.routing_table)].url;
+                workerUrl = this.worker_queues[shard_key.route(this.routing_table)].Url;
             }
 
             return (request, workerUrl);
@@ -148,11 +154,11 @@ namespace kinetica
         /// Retrieves records for a given shard key, optionally further limited by an
         /// additional expression.
         /// </summary>
-        public GetRecordsResponse<T> getRecordsByKey( T record,
+        public GetRecordsResponse<T> GetRecordsByKey( T record,
                                                       string expression = null )
         {
             if ( this.shard_key_builder == null)
-                throw new KineticaException( "Cannot get by key from unsharded table: " + this.table_name );
+                throw new KineticaException( "Cannot get by key from unsharded table: " + this.TableName );
 
             try
             {
@@ -161,7 +167,7 @@ namespace kinetica
                 if (workerUrl == null)
                     return kineticaDB.getRecords<T>(request);
 
-                var raw_response = this.kineticaDB.SubmitRequest<RawGetRecordsResponse>(workerUrl, request);
+                var raw_response = this.KineticaDb.SubmitRequest<RawGetRecordsResponse>(workerUrl, request);
                 return DecodeRawResponse(raw_response);
             } catch ( KineticaException ex )
             {
@@ -170,7 +176,13 @@ namespace kinetica
             {
                 throw new KineticaException( "Error in retrieving records by key: ", ex );
             }
-        }  // end getRecordsByKey()
+        }  // end GetRecordsByKey()
+
+        /// <summary>Retrieves records for a given shard key.</summary>
+        [Obsolete("Use GetRecordsByKey instead.")]
+        public GetRecordsResponse<T> getRecordsByKey( T record,
+                                                      string expression = null )
+            => GetRecordsByKey(record, expression);
 
 
         /// <summary>

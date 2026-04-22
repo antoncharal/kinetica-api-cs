@@ -161,12 +161,12 @@ namespace kinetica
         /// <summary>
         /// API Constructor
         /// </summary>
-        /// <param name="url_str">URL for Kinetica Server (including "http:" and port)</param>
+        /// <param name="url">URL for Kinetica Server (including "http:" and port)</param>
         /// <param name="options">Optional connection options</param>
-        public Kinetica( string url_str, Options? options = null )
+        public Kinetica( string url, Options? options = null )
         {
-            Url = url_str;
-            URL = new Uri( url_str );
+            Url = url;
+            URL = new Uri( url );
             _transport = new HttpClientTransport(
                 TimeSpan.FromSeconds( options?.TimeoutSeconds ?? 100 ) );
             if ( null != options ) // If caller specified options
@@ -188,10 +188,10 @@ namespace kinetica
         /// Test constructor — accepts an injected <see cref="IHttpTransport"/>
         /// so that unit tests can intercept HTTP calls without a live server.
         /// </summary>
-        internal Kinetica( string url_str, IHttpTransport transport, Options? options = null )
+        internal Kinetica( string url, IHttpTransport transport, Options? options = null )
         {
-            Url = url_str;
-            URL = new Uri( url_str );
+            Url = url;
+            URL = new Uri( url );
             _transport = transport;
             if ( null != options )
             {
@@ -223,17 +223,17 @@ namespace kinetica
         /// Given a table name, add its record type to enable proper encoding of records
         /// for insertion or updates.
         /// </summary>
-        /// <param name="table_name">Name of the table.</param>
+        /// <param name="tableName">Name of the table.</param>
         /// <param name="obj_type">The type associated with the table.</param>
-        public void AddTableType( string table_name, Type obj_type )
+        public void AddTableType( string tableName, Type obj_type )
         {
             try
             {
                 // Get the type from the table
-                KineticaType ktype = KineticaType.fromTable( this, table_name );
-                if ( ktype.getTypeID() == null )
-                    throw new KineticaException( $"Could not get type ID for table '{table_name}'" );
-                this.knownTypes.TryAdd( ktype.getTypeID(), ktype );
+                KineticaType ktype = KineticaType.FromTable( this, tableName );
+                if ( ktype.TypeId == null )
+                    throw new KineticaException( $"Could not get type ID for table '{tableName}'" );
+                this.knownTypes.TryAdd( ktype.TypeId, ktype );
 
                 // Save a mapping of the object to the KineticaType
                 if ( obj_type != null )
@@ -248,21 +248,21 @@ namespace kinetica
         /// <summary>
         /// Async overload of <see cref="AddTableType"/>.
         /// </summary>
-        /// <param name="table_name">The table to discover the type from.</param>
+        /// <param name="tableName">The table to discover the type from.</param>
         /// <param name="obj_type">The CLR type to associate with the discovered Kinetica type.</param>
         /// <param name="cancellationToken">Token to cancel the async operation.</param>
         public async Task AddTableTypeAsync(
-            string table_name,
+            string tableName,
             Type obj_type,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var ktype = await KineticaType.FromTableAsync(this, table_name, cancellationToken)
+                var ktype = await KineticaType.FromTableAsync(this, tableName, cancellationToken)
                     .ConfigureAwait(false);
-                if (ktype.getTypeID() == null)
-                    throw new KineticaException($"Could not get type ID for table '{table_name}'");
-                this.knownTypes.TryAdd(ktype.getTypeID(), ktype);
+                if (ktype.TypeId == null)
+                    throw new KineticaException($"Could not get type ID for table '{tableName}'");
+                this.knownTypes.TryAdd(ktype.TypeId, ktype);
                 if (obj_type != null)
                     this.SetKineticaSourceClassToTypeMapping(obj_type, ktype);
             }

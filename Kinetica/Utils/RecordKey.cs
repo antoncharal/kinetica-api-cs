@@ -40,27 +40,22 @@ namespace kinetica.Utils
         /// <summary>
         /// The day of the unix epoch (1970-01-01, UTC).
         /// </summary>
-        private static readonly DateTime EPOCH_DATE = DateTime.UnixEpoch;
+        private static readonly DateTime EpochDate = DateTime.UnixEpoch;
 
         /// <summary>
-        /// Minimum supported year by Kinetica is 1000
+        /// Minimum supported year by Kinetica is 1000.
         /// </summary>
-        private static readonly int MIN_SUPPORTED_YEAR = 1000;
+        private const int MinSupportedYear = 1000;
 
         /// <summary>
-        /// Maximum supported year by Kinetica is 2900
+        /// Maximum supported year by Kinetica is 2900.
         /// </summary>
-        private static readonly int MAX_SUPPORTED_YEAR = 2900;
+        private const int MaxSupportedYear = 2900;
 
         /// <summary>
-        /// 1900
+        /// 1900 — the year base used by the Kinetica date/time encoding.
         /// </summary>
-        private static readonly int YEAR_1900 = 1900;
-
-        /// <summary>
-        /// The UTC timezone
-        /// </summary>
-        private static readonly TimeZoneInfo UTC = TimeZoneInfo.Utc;
+        private const int Year1900 = 1900;
 
         private readonly byte[] buffer;
         private readonly int buffer_size;
@@ -463,7 +458,7 @@ namespace kinetica.Utils
             }
 
             // Kinetica does not support years outside the range [1000, 2900]
-            if ((year < MIN_SUPPORTED_YEAR) || (year > MAX_SUPPORTED_YEAR))
+            if ((year < MinSupportedYear) || (year > MaxSupportedYear))
             {
                 this.addInt(0);
                 this.is_valid = false;
@@ -473,7 +468,7 @@ namespace kinetica.Utils
             int fixed_day_of_week = ((int)calendar.GetDayOfWeek(date) + 1);
 
             // Deduce the integer representing the date
-            int date_integer = (((year - YEAR_1900) << 21)
+            int date_integer = (((year - Year1900) << 21)
                                  | (month << 17)
                                  | (day << 12)
                                  | (calendar.GetDayOfYear(date) << 3)
@@ -570,7 +565,7 @@ namespace kinetica.Utils
             }
 
             // Kinetica does not support years outside the range [1000, 2900]
-            if ((year < MIN_SUPPORTED_YEAR) || (year > MAX_SUPPORTED_YEAR))
+            if ((year < MinSupportedYear) || (year > MaxSupportedYear))
             {
                 this.addLong(0);
                 this.is_valid = false;
@@ -580,7 +575,7 @@ namespace kinetica.Utils
             int fixed_day_of_week = ((int)calendar.GetDayOfWeek(date) + 1);
 
             // Deduce the integer representing the date
-            long datetime_long = (long)((((long)(year - YEAR_1900)) << 53)
+            long datetime_long = (long)((((long)(year - Year1900)) << 53)
                                           | (((long)month) << 49)
                                           | (((long)day) << 44)
                                           | (((long)hour) << 39)
@@ -851,10 +846,10 @@ namespace kinetica.Utils
             }
 
             // Encode the timestamp the way the database server does it
-            DateTime time = EPOCH_DATE.AddMilliseconds((double)value);
+            DateTime time = EpochDate.AddMilliseconds((double)value);
             long fixed_day_of_week = ((long)time.DayOfWeek + 1);
 
-            long timestamp = (long)((((long)(time.Year - YEAR_1900)) << 53)
+            long timestamp = (long)((((long)(time.Year - Year1900)) << 53)
                                       | (((long)(time.Month)) << 49)
                                       | (((long)time.Day) << 44)
                                       | (((long)time.Hour) << 39)

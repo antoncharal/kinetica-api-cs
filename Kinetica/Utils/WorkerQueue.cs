@@ -12,7 +12,7 @@ namespace kinetica.Utils
     internal sealed class WorkerQueue<T>
     {
         private readonly object _gate = new();
-        public System.Uri url { get; private set; }
+        public System.Uri Url { get; private set; }
         private readonly int capacity;
         private List<T> queue;
 
@@ -23,7 +23,7 @@ namespace kinetica.Utils
         /// <param name="url"></param>
         public WorkerQueue( System.Uri url )
         {
-            this.url = url;
+            this.Url = url;
             this.capacity = 1;
 
             queue = [];
@@ -38,7 +38,7 @@ namespace kinetica.Utils
         /// <param name="capacity"></param>
         public WorkerQueue(System.Uri url, int capacity)
         {
-            this.url = url;
+            this.Url = url;
             this.capacity = capacity;
 
             queue = [];

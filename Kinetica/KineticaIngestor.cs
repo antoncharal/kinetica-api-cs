@@ -29,15 +29,21 @@ namespace kinetica
         [Serializable]
         public class InsertException<T> : KineticaException
         {
-            public Uri url { get; private set; }
-            public IList<T> records { get; private set; }
+            public Uri Url { get; private set; }
+            public IReadOnlyList<T> Records { get; private set; }
+
+            [Obsolete("Use Url instead.")]
+            public Uri url => Url;
+
+            [Obsolete("Use Records instead.")]
+            public IList<T> records => (IList<T>)Records;
 
             public InsertException( string msg ) : base( msg ) { }
 
             internal InsertException( Uri url_, IList<T> records_, string msg ) : base( msg )
             {
-                this.url = url_;
-                this.records = records_;
+                this.Url = url_;
+                this.Records = records_.AsReadOnly();
             }
 
             /// <inheritdoc />
@@ -49,11 +55,22 @@ namespace kinetica
 
         // KineticaIngestor Members:
         // =========================
-        public Kinetica kineticaDB { get; }
-        public string table_name { get; }
-        public int batch_size { get; }
-        public IDictionary<string, string> options { get; }
-        //public IReadOnlyDictionary<string, string> options { get; }
+        public Kinetica KineticaDb { get; }
+        public string TableName { get; }
+        public int BatchSize { get; }
+        public IDictionary<string, string> Options { get; }
+
+        [Obsolete("Use KineticaDb instead.")]
+        public Kinetica kineticaDB => KineticaDb;
+
+        [Obsolete("Use TableName instead.")]
+        public string table_name => TableName;
+
+        [Obsolete("Use BatchSize instead.")]
+        public int batch_size => BatchSize;
+
+        [Obsolete("Use Options instead.")]
+        public IDictionary<string, string> options => Options;
         private long _countInserted;
         private long _countUpdated;
 
@@ -83,16 +100,16 @@ namespace kinetica
                                  Dictionary<string, string>? options = null,
                                  Utils.WorkerList? workers = null )
         {
-            this.kineticaDB = kdb;
-            this.table_name = tableName;
+            this.KineticaDb = kdb;
+            this.TableName = tableName;
             this.ktype = ktype;
 
             // Validate and save the batch size
             if ( batchSize < 1 )
                 throw new KineticaException( $"Batch size must be greater than one; given {batchSize}." );
-            this.batch_size = batchSize;
+            this.BatchSize = batchSize;
 
-            this.options = options;
+            this.Options = options;
 
             // Set up the primary and shard key builders
             // -----------------------------------------
@@ -176,7 +193,8 @@ namespace kinetica
         /// </summary>
         /// <returns>The number of records inserted into Kinetica through this
         /// ingestor so far.</returns>
-        public Int64 getCountInserted()
+        [Obsolete("Use CountInserted property instead.")]
+        public long getCountInserted()
         {
             return Interlocked.Read( ref _countInserted );
         }
@@ -187,7 +205,8 @@ namespace kinetica
         /// </summary>
         /// <returns>The number of records updated into Kinetica through this
         /// ingestor so far.</returns>
-        public Int64 getCountUpdated()
+        [Obsolete("Use CountUpdated property instead.")]
+        public long getCountUpdated()
         {
             return Interlocked.Read( ref _countUpdated );
         }
@@ -217,15 +236,19 @@ namespace kinetica
 
 
         /// <summary>
-        /// Ensures that all queued records are inserted into Kinetica.  If an error
-        /// occurs while inserting the records from any queue, the records will no
-        /// longer be in that queue nor in Kinetica; catch <see cref="InsertException{T}" />
-        /// to get the list of records that were being inserted if needed (for example,
-        /// to retry).  Other queues may also still contain unflushed records if this
-        /// occurs.
+        /// Ensures that all queued records are inserted into Kinetica.
         /// </summary>
-        /// <exception cref="InsertException{T}">If the flushed records fail to insert
-        /// </exception>
+        public void Flush()
+        {
+            foreach ( Utils.WorkerQueue<T> workerQueue in this.workerQueues )
+            {
+                IList<T> queue = workerQueue.flush();
+                flush( queue, workerQueue.Url );
+            }
+        }
+
+        /// <summary>Flushes all queued records.</summary>
+        [Obsolete("Use Flush() instead.")]
         public void flush()
         {
             foreach ( Utils.WorkerQueue<T> workerQueue in this.workerQueues )
@@ -233,7 +256,7 @@ namespace kinetica
                 // Flush the queue
                 IList<T> queue = workerQueue.flush();
                 // Actually insert the records
-                flush( queue, workerQueue.url );
+                flush( queue, workerQueue.Url );
             }
         }  // end public flush
 
@@ -255,18 +278,18 @@ namespace kinetica
                 // -------------------------------------------------------
                 // Encode the records into binary
                 List<byte[]> encodedQueue = [];
-                foreach ( var record in queue ) encodedQueue.Add( this.kineticaDB.AvroEncode( record ) );
-                RawInsertRecordsRequest request = new( this.table_name, encodedQueue, this.options);
+                foreach ( var record in queue ) encodedQueue.Add( this.KineticaDb.AvroEncode( record ) );
+                RawInsertRecordsRequest request = new( this.TableName, encodedQueue, this.Options);
 
                 InsertRecordsResponse response = new();
 
                 if ( url == null )
                 {
-                    response = this.kineticaDB.insertRecordsRaw( request );
+                    response = this.KineticaDb.insertRecordsRaw( request );
                 }
                 else
                 {
-                    response = this.kineticaDB.SubmitRequest<InsertRecordsResponse>( url, request );
+                    response = this.KineticaDb.SubmitRequest<InsertRecordsResponse>( url, request );
                 }
 
                 // Save the counts of inserted and updated records
@@ -282,16 +305,18 @@ namespace kinetica
 
 
         /// <summary>
-        /// Queues a record for insertion into Kinetica.  If the queue reaches
-        /// the configured batch size, all records in the queue will be
-        /// inserted into Kinetica before the method returns.  If an error occurs
-        /// while inserting the records, the records will no longer be in the queue
-        /// nor in Kinetica; catch <see cref="InsertException{T}"/>  to get the list
-        /// of records that were being inserted if needed (for example, to retry).
+        /// Queues a record for insertion into Kinetica.
         /// </summary>
-        /// <param name="record">The record to insert.</param>
-        /// <exception cref="InsertException{T}">If the record cannot be inserted
-        /// </exception>
+        public void Insert( T record )
+        {
+            var workerQueue = RouteFor(record, out var primaryKey);
+            IList<T> queue = workerQueue.insert( record, primaryKey );
+            if ( queue != null )
+                this.flush( queue, workerQueue.Url );
+        }
+
+        /// <summary>Queues a record for insertion.</summary>
+        [Obsolete("Use Insert() instead.")]
         public void insert( T record )
         {
             var workerQueue = RouteFor(record, out var primaryKey);
@@ -303,26 +328,29 @@ namespace kinetica
             // properly
             if ( queue != null )
             {
-                this.flush( queue, workerQueue.url );
+                this.flush( queue, workerQueue.Url );
             }
         }  // end insert( record )
 
 
 
-        /// <summary>
-        /// Queues a list of records for insertion into Kinetica.  If any queue
-        /// reaches the configured batch size, all records in that queue
-        /// will be inserted into Kinetica before the method returns.  If an
-        /// error occurs while inserting the queued records, the records will
-        /// no longer be in that queue nor in Kinetica; catch <see cref="InsertException{T}"/> 
-        /// to get the list of records that were being inserted (including any
-        /// from the queue in question and any remaining in the list not yet
-        /// queued) if needed (for example, to retry).  Note that depending on
-        /// the number of records, multiple calls to Kinetica may occur.
-        /// </summary>
-        /// <param name="records">The records to insert.</param>
-        /// <exception cref="InsertException{T}"/>If the records cannot be
-        /// inserted</exception>
+        /// <summary>Queues a list of records for insertion into Kinetica.</summary>
+        public void Insert( IList<T> records)
+        {
+            for ( int i = 0; i < records.Count; ++i )
+            {
+                try { this.Insert( records[ i ] ); }
+                catch ( InsertException<T> ex )
+                {
+                    IList<T> queue = (IList<T>)ex.Records;
+                    for ( int j = i + 1; j < records.Count; ++j ) queue.Add( records[ j ] );
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>Queues a list of records for insertion.</summary>
+        [Obsolete("Use Insert(IList<T>) instead.")]
         public void insert( IList<T> records)
         {
             // Insert one record at a time
@@ -336,7 +364,7 @@ namespace kinetica
                 {
                     // Add the remaining records to the insertion exception
                     // record queue
-                    IList<T> queue = ex.records;
+                    IList<T> queue = (IList<T>)ex.Records;
 
                     for ( int j = i + 1; j < records.Count; ++j )
                     {
@@ -363,7 +391,7 @@ namespace kinetica
         {
             // Drain every worker queue upfront (each flush() is lock-guarded internally).
             var pending = this.workerQueues
-                .Select(wq => (queue: wq.flush(), wq.url))
+                .Select(wq => (queue: wq.flush(), wq.Url))
                 .Where(p => p.queue.Count > 0)
                 .ToList();
 
@@ -380,7 +408,7 @@ namespace kinetica
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    results.Add(await FlushAsync(p.queue, p.url, cancellationToken).ConfigureAwait(false));
+                    results.Add(await FlushAsync(p.queue, p.Url, cancellationToken).ConfigureAwait(false));
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)               { exceptions.Add(ex); }
@@ -426,21 +454,21 @@ namespace kinetica
             {
                 List<byte[]> encodedQueue = [];
                 foreach (var record in queue)
-                    encodedQueue.Add(this.kineticaDB.AvroEncode(record));
+                    encodedQueue.Add(this.KineticaDb.AvroEncode(record));
 
-                var request = new RawInsertRecordsRequest(this.table_name, encodedQueue, this.options);
+                var request = new RawInsertRecordsRequest(this.TableName, encodedQueue, this.Options);
 
                 InsertRecordsResponse response;
                 if (url == null)
                 {
-                    response = await this.kineticaDB
+                    response = await this.KineticaDb
                         .SubmitRequestAsync<InsertRecordsResponse>("/insert/records", request,
                             cancellationToken: cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
                 {
-                    response = await this.kineticaDB
+                    response = await this.KineticaDb
                         .SubmitRequestAsync<InsertRecordsResponse>(url, request,
                             cancellationToken: cancellationToken)
                         .ConfigureAwait(false);
@@ -471,7 +499,7 @@ namespace kinetica
 
             var queue = workerQueue.insert(record, primaryKey);
             if (queue != null)
-                await FlushAsync(queue, workerQueue.url, cancellationToken).ConfigureAwait(false);
+                await FlushAsync(queue, workerQueue.Url, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -541,7 +569,7 @@ namespace kinetica
                     Utils.RecordKey? primaryKey = this.primaryKeyBuilder?.build(record);
                     var flushed = workerQueue.insert(record, primaryKey);
                     if (flushed != null)
-                        await FlushAsync(flushed, workerQueue.url, cancellationToken).ConfigureAwait(false);
+                        await FlushAsync(flushed, workerQueue.Url, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)

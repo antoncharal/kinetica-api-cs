@@ -23,10 +23,10 @@ namespace kinetica
                 DEFAULT = Schema.Type.Error
             };
 
-            private string m_name;
-            private ColumnType m_type;
-            private bool m_isNullable;
-            private IList<string> m_properties;
+            private string _name;
+            private ColumnType _type;
+            private bool _isNullable;
+            private IList<string> _properties;
 
             /// <summary>
             /// Creates a Column object from the given name, type, and properties.
@@ -36,47 +36,52 @@ namespace kinetica
             /// <param name="properties"></param>
             public Column(string name, ColumnType type, IList<string>? properties = null)
             {
-                m_name = name;
-                m_type = type;
-                m_isNullable = false;
-                m_properties = properties ?? [];
+                _name = name;
+                _type = type;
+                _isNullable = false;
+                _properties = properties ?? [];
 
                 Initialize();
             }
 
-            /// <summary>
-            /// Returns the name of the column.
-            /// </summary>
-            /// <returns></returns>
-            public string getName() { return m_name; }
+            /// <summary>Gets the name of the column.</summary>
+            public string Name => _name;
 
-            /// <summary>
-            /// Returns the enumeration for the column type.
-            /// </summary>
-            /// <returns></returns>
-            public ColumnType getType() { return m_type; }
+            /// <summary>Returns the name of the column.</summary>
+            [Obsolete("Use the Name property instead.")]
+            public string getName() { return _name; }
 
-            /// <summary>
-            /// Returns if the column is nullable.
-            /// </summary>
-            /// <returns></returns>
-            public bool isNullable() { return m_isNullable; }
+            /// <summary>Gets the enumeration for the column type.</summary>
+            public ColumnType Type => _type;
 
-            /// <summary>
-            /// Returns the properties for the column.
-            /// </summary>
-            /// <returns></returns>
-            public IList<string> getProperties() { return m_properties; }
+            /// <summary>Returns the enumeration for the column type.</summary>
+            [Obsolete("Use the Type property instead.")]
+            public ColumnType getType() { return _type; }
 
-            internal void setIsNullable( bool val ) { m_isNullable = val;  }
+            /// <summary>Indicates whether the column is nullable.</summary>
+            public bool IsNullable => _isNullable;
 
-            /// <summary>
-            /// Returns the string format of the data type.
-            /// </summary>
-            /// <returns></returns>
+            /// <summary>Returns if the column is nullable.</summary>
+            [Obsolete("Use the IsNullable property instead.")]
+            public bool isNullable() { return _isNullable; }
+
+            /// <summary>Gets the properties for the column.</summary>
+            public IReadOnlyList<string> Properties => (IReadOnlyList<string>)_properties;
+
+            /// <summary>Returns the properties for the column.</summary>
+            [Obsolete("Use the Properties property instead.")]
+            public IList<string> getProperties() { return _properties; }
+
+            internal void setIsNullable( bool val ) { _isNullable = val; }
+
+            /// <summary>Gets the string format of the data type.</summary>
+            public string TypeString => getTypeString();
+
+            /// <summary>Returns the string format of the data type.</summary>
+            [Obsolete("Use the TypeString property instead.")]
             public string getTypeString()
             {
-                return m_type switch
+                return _type switch
                 {
                     ColumnType.BYTES => "bytes",
                     ColumnType.DOUBLE => "double",
@@ -84,18 +89,18 @@ namespace kinetica
                     ColumnType.INT => "int",
                     ColumnType.LONG => "long",
                     ColumnType.STRING => "string",
-                    _ => throw new KineticaException("Unsupported column type: " + m_type),
+                    _ => throw new KineticaException("Unsupported column type: " + _type),
                 };
             }  // end getTypeString()
 
             private void Initialize()
             {
-                if (string.IsNullOrEmpty(m_name))
+                if (string.IsNullOrEmpty(_name))
                 {
                     throw new ArgumentException("Name must not be empty.");
                 }
 
-                switch (m_type)
+                switch (_type)
                 {
                     case ColumnType.BYTES:
                     case ColumnType.DOUBLE:
@@ -106,26 +111,26 @@ namespace kinetica
                         break;
 
                     default:
-                        throw new ArgumentException($"Column {m_name} must be of type BYTES, DOUBLE, FLOAT, INT, LONG or STRING.");
+                        throw new ArgumentException($"Column {_name} must be of type BYTES, DOUBLE, FLOAT, INT, LONG or STRING.");
                 }
 
-                foreach (var it in m_properties)
+                foreach (var it in _properties)
                 {
                     if (string.IsNullOrEmpty(it))
                     {
                         throw new ArgumentException("Properties must not be empty.");
                     }
 
-                    if (!m_isNullable && (it == ColumnProperty.NULLABLE))
+                    if (!_isNullable && (it == ColumnProperty.NULLABLE))
                     {
-                        m_isNullable = true;
+                        _isNullable = true;
                     }
                 }
             }
 
             public override string ToString()
             {
-                return $"{m_name} ({m_type})";
+                return $"{_name} ({_type})";
             }
         }  // end class Column
 
@@ -139,16 +144,16 @@ namespace kinetica
             public Type? sourceType = null;
         }
 
-        private TypeData m_data = new();
-        private IDictionary<string, IList<string>> m_properties = new Dictionary<string, IList<string>>();
-        private string? m_typeId = null;
+        private TypeData _data = new();
+        private IDictionary<string, IList<string>> _properties = new Dictionary<string, IList<string>>();
+        private string? _typeId = null;
 
-        /// <summary>
-        /// Create a KineticaType object based on an existing table in the database.
-        /// </summary>
-        /// <param name="kinetica"></param>
-        /// <param name="tableName"></param>
-        /// <returns></returns>
+        /// <summary>Create a <see cref="KineticaType"/> based on an existing table in the database.</summary>
+        public static KineticaType FromTable(Kinetica kinetica, string tableName)
+            => fromTable(kinetica, tableName);
+
+        /// <summary>Create a <see cref="KineticaType"/> based on an existing table in the database.</summary>
+        [Obsolete("Use FromTable instead.")]
         public static KineticaType fromTable(Kinetica kinetica, string tableName)
         {
             var response = kinetica.showTable(tableName);
@@ -174,12 +179,12 @@ namespace kinetica
             return new KineticaType(response.type_labels[0], response.type_schemas[0], response.properties[0], typeId );
         }
 
-        /// <summary>
-        /// Create a KineticaType object based on an existing type in the database.
-        /// </summary>
-        /// <param name="kinetica"></param>
-        /// <param name="typeId"></param>
-        /// <returns></returns>
+        /// <summary>Create a <see cref="KineticaType"/> based on an existing type ID in the database.</summary>
+        public static KineticaType FromTypeId(Kinetica kinetica, string typeId)
+            => fromTypeID(kinetica, typeId);
+
+        /// <summary>Create a <see cref="KineticaType"/> based on an existing type in the database.</summary>
+        [Obsolete("Use FromTypeId instead.")]
         public static KineticaType fromTypeID(Kinetica kinetica, string typeId)
         {
             var response = kinetica.showTypes(typeId, "");
@@ -242,15 +247,14 @@ namespace kinetica
         }
 
 
-        /// <summary>
-        /// Create a KineticaType object based on information provided in a dynamic schema.
-        /// </summary>
-        /// <param name="dynamicTableSchemaString">The dynamic schema string.</param>
-        /// <param name="columnHeaders">List of column names.</param>
-        /// <param name="columnTypes">List of column types.</param>
-        /// <returns></returns>
+        /// <summary>Create a <see cref="KineticaType"/> from a dynamic schema string.</summary>
+        public static KineticaType FromDynamicSchema(string dynamicTableSchemaString, object[] columnHeaders, object[] columnTypes)
+            => fromDynamicSchema(dynamicTableSchemaString, columnHeaders, columnTypes);
+
+        /// <summary>Create a <see cref="KineticaType"/> based on information provided in a dynamic schema.</summary>
+        [Obsolete("Use FromDynamicSchema instead.")]
         public static KineticaType fromDynamicSchema( string dynamicTableSchemaString,
-                                                      Object[] columnHeaders, Object[] columnTypes )
+                                                      object[] columnHeaders, object[] columnTypes )
         {
             // Make sure that the lists of column names and types are of the same length
             if ( columnHeaders.Length != columnTypes.Length )
@@ -583,7 +587,7 @@ namespace kinetica
         /// <param name="columns">A list of Columns with information on all the columns for the type.</param>
         public KineticaType(IList<Column> columns)
         {
-            m_data.columns = columns;
+            _data.columns = columns;
             Initialize();
             CreateSchema();  // create the schema from columns
         }
@@ -595,7 +599,7 @@ namespace kinetica
         /// <param name="columns">A list of Columns with information on all the columns for the type.</param>
         public KineticaType(string label, IList<Column> columns) : this(columns)
         {
-            m_data.label = label;
+            _data.label = label;
         }
 
         /// <summary>
@@ -606,7 +610,7 @@ namespace kinetica
         /// <param name="properties">A per-column property information</param>
         public KineticaType( string label, IList<Column> columns, IDictionary<string, IList<string>> properties ) : this( label, columns )
         {
-            m_properties = properties ?? new Dictionary<string, IList<string>>();
+            _properties = properties ?? new Dictionary<string, IList<string>>();
         }
 
         /// <summary>
@@ -615,7 +619,7 @@ namespace kinetica
         /// <param name="typeSchema"></param>
         public KineticaType(string typeSchema)
         {
-            m_data.schemaString = typeSchema;
+            _data.schemaString = typeSchema;
             CreateSchemaFromString( typeSchema );
             CreateSchema();
         }
@@ -629,25 +633,50 @@ namespace kinetica
         /// <param name="typeId">An optional ID for this type with which to identify it in the database.</param>
         public KineticaType(string label, string typeSchema, IDictionary<string, IList<string>> properties, string? typeId = null )
         {
-            m_properties = properties;
-            m_typeId = typeId;
-            m_data.label = label;
-            m_data.schemaString = typeSchema;
+            _properties = properties;
+            _typeId = typeId;
+            _data.label = label;
+            _data.schemaString = typeSchema;
             CreateSchemaFromString(typeSchema, properties);
             CreateSchema();
         }
 
-        public string getLabel() { return m_data.label; }
-        public IList<Column> getColumns() { return m_data.columns; }
-        public Column getColumn(int index) { return m_data.columns[index]; }
-        public Column getColumn(string name) { return m_data.columns[getColumnIndex(name)]; }
-        public int getColumnCount() { return m_data.columns.Count; }
-        public int getColumnIndex(string name) { return m_data.columnMap[name]; }
-        public bool hasColumn(string name) { return m_data.columnMap.ContainsKey(name); }
-        public Schema getSchema() { return m_data.schema; }
-        public Type? getSourceType() { return m_data.sourceType;}
-        public string getSchemaString() { return m_data.schemaString; }
-        public string getTypeID() { return m_typeId;  }
+        public string getLabel() { return _data.label; }
+
+        /// <summary>Gets the list of columns in this type.</summary>
+        public IReadOnlyList<Column> Columns => _data.columns.AsReadOnly();
+
+        /// <summary>Gets the number of columns in this type.</summary>
+        public int ColumnCount => _data.columns.Count;
+
+        /// <summary>Gets the type ID registered in the database, or null if not yet registered.</summary>
+        public string? TypeId => _typeId;
+
+        /// <summary>Gets the Avro schema for this type.</summary>
+        public Schema? AvroSchema => _data.schema;
+
+        /// <summary>Gets the string representation of the Avro schema.</summary>
+        public string? SchemaString => _data.schemaString;
+
+        /// <summary>Returns true if this type contains a column with the given name.</summary>
+        public bool ContainsColumn(string name) => _data.columnMap.ContainsKey(name);
+
+        [Obsolete("Use Columns property instead.")]
+        public IList<Column> getColumns() { return _data.columns; }
+        public Column getColumn(int index) { return _data.columns[index]; }
+        public Column getColumn(string name) { return _data.columns[getColumnIndex(name)]; }
+        [Obsolete("Use ColumnCount property instead.")]
+        public int getColumnCount() { return _data.columns.Count; }
+        public int getColumnIndex(string name) { return _data.columnMap[name]; }
+        [Obsolete("Use ContainsColumn instead.")]
+        public bool hasColumn(string name) { return _data.columnMap.ContainsKey(name); }
+        [Obsolete("Use AvroSchema property instead.")]
+        public Schema getSchema() { return _data.schema; }
+        public Type? getSourceType() { return _data.sourceType; }
+        [Obsolete("Use SchemaString property instead.")]
+        public string getSchemaString() { return _data.schemaString; }
+        [Obsolete("Use TypeId property instead.")]
+        public string getTypeID() { return _typeId; }
 
         /// <summary>
         /// Saves the given type as this KineticaType's source type.
@@ -655,7 +684,7 @@ namespace kinetica
         /// <param name="sourceType">The type that works as the source. </param>
         public void saveSourceType( Type sourceType )
         {
-            this.m_data.sourceType = sourceType;
+            this._data.sourceType = sourceType;
         }  // end saveSourceType
 
 
@@ -669,11 +698,11 @@ namespace kinetica
         {
             // Save the association between this KineticaType's source and itself in the Kinetica object
             // for future reference (it helps with encoding and decoding records)
-            if ( this.m_data.sourceType != null )
-                kinetica.SetKineticaSourceClassToTypeMapping( this.m_data.sourceType, this );
+            if ( this._data.sourceType != null )
+                kinetica.SetKineticaSourceClassToTypeMapping( this._data.sourceType, this );
 
             // Register the type with Kinetica
-            CreateTypeResponse response = kinetica.createType( m_data.schemaString, m_data.label, m_properties);
+            CreateTypeResponse response = kinetica.createType( _data.schemaString, _data.label, _properties);
             return response.type_id;
         }  // end create()
 
@@ -685,7 +714,7 @@ namespace kinetica
         /// </summary>
         private void Initialize()
         {
-            int columnCount = m_data.columns.Count;
+            int columnCount = _data.columns.Count;
 
             if (columnCount == 0)
             {
@@ -694,14 +723,14 @@ namespace kinetica
 
             for (int i = 0; i < columnCount; ++i)
             {
-                string columnName = m_data.columns[i].getName();
+                string columnName = _data.columns[i].Name;
 
-                if (m_data.columnMap.ContainsKey(columnName))
+                if (_data.columnMap.ContainsKey(columnName))
                 {
                     throw new ArgumentException("Duplicate column name " + columnName + " specified.");
                 }
 
-                m_data.columnMap[columnName] = i;
+                _data.columnMap[columnName] = i;
             }
         }  // end Initialize()
 
@@ -717,7 +746,7 @@ namespace kinetica
             // Create the avro schema from the string and save it
             try
             {
-                m_data.schema = RecordSchema.Parse(typeSchema);
+                _data.schema = RecordSchema.Parse(typeSchema);
             }
             catch (Exception ex)
             {
@@ -752,7 +781,7 @@ namespace kinetica
                     throw new ArgumentException("Schema has unnamed field.");
                 }
 
-                if (m_data.columnMap.ContainsKey(fieldName))
+                if (_data.columnMap.ContainsKey(fieldName))
                 {
                     throw new ArgumentException($"Duplicate field name {fieldName}.");
                 }
@@ -842,9 +871,9 @@ namespace kinetica
 
                 column.setIsNullable( isColumnNullable );
 
-                m_data.columns.Add( column );
+                _data.columns.Add( column );
 
-                m_data.columnMap[fieldName] = m_data.columns.Count - 1;
+                _data.columnMap[fieldName] = _data.columns.Count - 1;
             }
         }  // end CreateSchemaFromString()
 
@@ -854,18 +883,18 @@ namespace kinetica
         private void CreateSchema()
         {
             // First, check if the schema has already been created
-            if (m_data.schema != null)
+            if (_data.schema != null)
             {
                 // nothing to do
                 return;
             }
 
             // Check if the schema string exists, if so, create the schema from that
-            if (m_data.schemaString != null)
+            if (_data.schemaString != null)
             {
                 try
                 {
-                    m_data.schema = RecordSchema.Parse(m_data.schemaString);
+                    _data.schema = RecordSchema.Parse(_data.schemaString);
                     return;
                 }
                 catch (Exception ex)
@@ -888,20 +917,20 @@ namespace kinetica
             schemaString += schemaOpening;
 
             // Create the json substrings for the columns
-            foreach (var column in m_data.columns)
+            foreach (var column in _data.columns)
             {
                 // Add the name
-                string fieldName = ("'name':'" + column.getName() + "'");
+                string fieldName = ("'name':'" + column.Name + "'");
 
                 // Add the type
                 string fieldType = "";
-                if (column.isNullable())
+                if (column.IsNullable)
                 {  // the column is nullable, so we need a union
-                    fieldType = ("['" + column.getTypeString() + "','null']");
+                    fieldType = ("['" + column.TypeString + "','null']");
                 }
                 else  // regular type, no union needed
                 {
-                    fieldType = ( "'" + column.getTypeString() + "'" );
+                    fieldType = ( "'" + column.TypeString + "'" );
                 }
                 fieldType = ("'type':" + fieldType);
 
@@ -919,7 +948,7 @@ namespace kinetica
             // Create the RecordSchema from the JSON string
             try
             {
-                m_data.schema = RecordSchema.Parse(schemaString);
+                _data.schema = RecordSchema.Parse(schemaString);
             }
             catch (Exception ex)
             {
@@ -927,7 +956,7 @@ namespace kinetica
             }
 
             // Save the schema string
-            m_data.schemaString = m_data.schema.ToString();
+            _data.schemaString = _data.schema.ToString();
             return;
         }  // end CreateSchema()
     }  // end class KineticaType

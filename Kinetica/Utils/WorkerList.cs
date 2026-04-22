@@ -56,8 +56,8 @@ namespace kinetica.Utils
         /// 
         /// <param name="db">The <see cref="Kinetica"/> instance from which to
         /// obtain the worker URLs.</param>
-        /// <param name="ip_regex">Optional IP regex to match.</param>
-        public WorkerList(Kinetica db, Regex ip_regex = null)
+        /// <param name="ipRegex">Optional IP regex to match.</param>
+        public WorkerList(Kinetica db, Regex? ipRegex = null)
         {
             // Get the system properties from the database server
             IDictionary<string, string> system_properties = db.showSystemProperties().property_map;
@@ -104,8 +104,8 @@ namespace kinetica.Utils
                         try
                         {
                             // If a regular expression is given, then see if this one is a match
-                            if (ip_regex != null)
-                                matching_url_found = ip_regex.IsMatch(url_str);
+                            if (ipRegex != null)
+                                matching_url_found = ipRegex.IsMatch(url_str);
                             else  // no regex given, so take the first URL encountered for this worker
                                 matching_url_found = true;
 
@@ -168,8 +168,8 @@ namespace kinetica.Utils
                         try
                         {
                             // If a regular expression is given, then see if this one is a match
-                            if (ip_regex != null)
-                                matching_ip_found = ip_regex.IsMatch(ip);
+                            if (ipRegex != null)
+                                matching_ip_found = ipRegex.IsMatch(ip);
                             else  // no regex given, so take the first IP encountered for this worker
                                 matching_ip_found = true;
 
