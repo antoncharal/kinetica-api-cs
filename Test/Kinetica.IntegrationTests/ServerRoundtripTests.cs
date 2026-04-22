@@ -27,7 +27,7 @@ public sealed class ServerRoundtripTests
     [KineticaServerFact]
     public void ShowSystemProperties_Roundtrip()
     {
-        var result = _fixture.Kdb.showSystemProperties();
+        var result = _fixture.Kdb!.showSystemProperties();
 
         result.ShouldNotBeNull();
         result.property_map.ShouldNotBeNull();
@@ -41,8 +41,8 @@ public sealed class ServerRoundtripTests
     [KineticaServerFact]
     public void CreateTable_InsertRecords_RetrieveRecords_Equal()
     {
-        var tableName = _fixture.QualifiedTable("crud_test");
-        var kdb = _fixture.Kdb;
+        var tableName = _fixture.QualifiedTable("crud_test")!;
+        var kdb = _fixture.Kdb!;
 
         // Create type + table
         var ktype = KineticaType.fromClass(typeof(SimpleRecord));
@@ -72,8 +72,8 @@ public sealed class ServerRoundtripTests
     [KineticaServerFact]
     public async Task InsertAsync_BatchOf1000_CountersMatch()
     {
-        var tableName = _fixture.QualifiedTable("async_ingest_test");
-        var kdb = _fixture.Kdb;
+        var tableName = _fixture.QualifiedTable("async_ingest_test")!;
+        var kdb = _fixture.Kdb!;
 
         var ktype = KineticaType.fromClass(typeof(SimpleRecord));
         var typeId = ktype.create(kdb);
@@ -96,11 +96,10 @@ public sealed class ServerRoundtripTests
     [KineticaServerFact]
     public async Task CancelLongRunningExecuteSql_ThrowsOperationCanceledException()
     {
-        var kdb = _fixture.Kdb;
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+        var kdb = _fixture.Kdb!;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // pre-cancel for deterministic behavior
 
-        // A complex query that should take long enough to be cancelled.
-        // The pre-cancelled token should fire before the server responds.
         await Should.ThrowAsync<OperationCanceledException>(
             () => kdb.SubmitRequestAsync<ExecuteSqlResponse>(
                 "/execute/sql",
@@ -118,8 +117,8 @@ public sealed class ServerRoundtripTests
     [KineticaServerFact]
     public void UpdateRecords_Roundtrip()
     {
-        var tableName = _fixture.QualifiedTable("update_test");
-        var kdb = _fixture.Kdb;
+        var tableName = _fixture.QualifiedTable("update_test")!;
+        var kdb = _fixture.Kdb!;
 
         // Create type with primary key on id
         var columnProperties = new Dictionary<string, IList<string>>

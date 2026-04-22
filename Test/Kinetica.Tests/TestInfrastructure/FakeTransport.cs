@@ -12,6 +12,11 @@ namespace Kinetica.Tests.TestInfrastructure
     /// so that concurrent callers interleave.  An optional
     /// <see cref="PostAsyncGate"/> holds all in-flight requests until the test
     /// releases the gate, enabling deterministic concurrency assertions.</para>
+    /// <para><b>Thread safety:</b> <see cref="LastUrl"/>, <see cref="LastBody"/>,
+    /// and the other <c>Last*</c> properties are written without synchronization.
+    /// After concurrent calls they reflect whichever writer ran last.  Do not
+    /// assert on <c>Last*</c> after parallel fan-out — use
+    /// <see cref="PostAsyncInvocations"/> instead.</para>
     /// </summary>
     internal sealed class FakeTransport : IHttpTransport
     {
