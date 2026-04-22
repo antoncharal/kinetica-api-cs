@@ -83,20 +83,14 @@ namespace kinetica
                 Avro.Generic.GenericRecord obj = (Avro.Generic.GenericRecord) reader.Read( null, dynamic_table_schema, dynamic_table_schema, decoder );
 
                 // Extract the column names from the encoded data
-                object column_headers_0 = new object();
-                Object[] column_headers = null;
-                if ( obj.TryGetValue( "column_headers", out column_headers_0 ) ) // try to get the data out
-                {
-                    column_headers = ( Object[] ) column_headers_0;
-                }
+                if (!obj.TryGetValue("column_headers", out object? column_headers_0))
+                    throw new KineticaException("Dynamic table schema is missing required field 'column_headers'.");
+                Object[] column_headers = (Object[]) column_headers_0!;
 
                 // Extract the column types from the encoded data
-                object column_types_0 = new object();
-                Object[] column_types = null;
-                if ( obj.TryGetValue( "column_datatypes", out column_types_0 ) ) // try to get the data out
-                {
-                    column_types = ( Object[] ) column_types_0;
-                }
+                if (!obj.TryGetValue("column_datatypes", out object? column_types_0))
+                    throw new KineticaException("Dynamic table schema is missing required field 'column_datatypes'.");
+                Object[] column_types = (Object[]) column_types_0!;
 
                 // Find out how many columns are returned
                 int num_columns = column_headers.Length;

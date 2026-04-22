@@ -38,9 +38,9 @@ namespace kinetica.Utils
         private static readonly Regex TIME_REGEX = new Regex("\\A(?<hour>\\d{1,2}):(?<minute>\\d{2}):(?<seconds>\\d{2})(\\.(?<milliseconds>\\d{1,3}))?$");
 
         /// <summary>
-        /// The day of the unix epoch (1970-01-01)
+        /// The day of the unix epoch (1970-01-01, UTC).
         /// </summary>
-        private static readonly DateTime EPOCH_DATE = new DateTime(1970, 1, 1);
+        private static readonly DateTime EPOCH_DATE = DateTime.UnixEpoch;
 
         /// <summary>
         /// Minimum supported year by Kinetica is 1000

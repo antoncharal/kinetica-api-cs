@@ -53,9 +53,8 @@ namespace kinetica.Utils
             // Multi-head ingestion IS enabled; find the worker URLs; then
             // add them to the worker url vector.
             // -----------------------------------------------------------
-            string worker_urls_str;
-            system_properties.TryGetValue("conf.worker_http_server_urls", out worker_urls_str);
-            if ( worker_urls_str.Length > 0 )  // found some URLs
+            if (system_properties.TryGetValue("conf.worker_http_server_urls", out string? worker_urls_str)
+                && !string.IsNullOrEmpty(worker_urls_str))  // found some URLs
             {
                 // Parse the URLs
                 // --------------
@@ -107,14 +106,11 @@ namespace kinetica.Utils
             else // construct the URLs from IP addresses and ports
             {
                 // Get the worker IPs and ports
-                string worker_ips_str, worker_ports_str;
-                system_properties.TryGetValue(ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_IPS, out worker_ips_str);
-                system_properties.TryGetValue(ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_PORTS, out worker_ports_str);
-
-                // Check that we got them
-                if (worker_ips_str.Length == 0)
+                if (!system_properties.TryGetValue(ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_IPS, out string? worker_ips_str)
+                    || string.IsNullOrEmpty(worker_ips_str))
                     throw new KineticaException("Missing value for " + ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_IPS);
-                if (worker_ports_str.Length == 0)
+                if (!system_properties.TryGetValue(ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_PORTS, out string? worker_ports_str)
+                    || string.IsNullOrEmpty(worker_ports_str))
                     throw new KineticaException("Missing value for " + ShowSystemPropertiesResponse.PropertyMap.CONF_WORKER_HTTP_SERVER_PORTS);
 
                 // Parse the IPs and the ports

@@ -30,18 +30,17 @@ namespace kinetica
         {
             public Uri url { get; private set; }
             public IList<T> records { get; private set; }
-            private string message;
 
             public InsertException( string msg ) : base( msg ) { }
 
-            internal InsertException( Uri url_, IList<T> records_, string msg ) : base ( msg )
+            internal InsertException( Uri url_, IList<T> records_, string msg ) : base( msg )
             {
-                this.message = msg;
                 this.url = url_;
                 this.records = records_;
             }
 
-            public override string ToString() { return "InsertException: " + message; }
+            /// <inheritdoc />
+            public override string ToString() => $"InsertException: {Message}";
         }  // end class InsertException
 
 
@@ -54,8 +53,14 @@ namespace kinetica
         public int batch_size { get; }
         public IDictionary<string, string> options { get; }
         //public IReadOnlyDictionary<string, string> options { get; }
-        public Int64 count_inserted;
-        public Int64 count_updated;
+        private long _countInserted;
+        private long _countUpdated;
+
+        /// <summary>Gets the number of records inserted so far. Reads are atomic.</summary>
+        public long CountInserted => Interlocked.Read(ref _countInserted);
+
+        /// <summary>Gets the number of records updated so far. Reads are atomic.</summary>
+        public long CountUpdated => Interlocked.Read(ref _countUpdated);
         private KineticaType ktype;
         private Utils.RecordKeyBuilder<T>? primaryKeyBuilder;
         private Utils.RecordKeyBuilder<T>? shardKeyBuilder;
@@ -179,7 +184,7 @@ namespace kinetica
         /// ingestor so far.</returns>
         public Int64 getCountInserted()
         {
-            return System.Threading.Interlocked.Read( ref this.count_inserted );
+            return Interlocked.Read( ref _countInserted );
         }
 
 
@@ -190,7 +195,7 @@ namespace kinetica
         /// ingestor so far.</returns>
         public Int64 getCountUpdated()
         {
-            return System.Threading.Interlocked.Read( ref this.count_updated );
+            return Interlocked.Read( ref _countUpdated );
         }
 
 
@@ -271,8 +276,8 @@ namespace kinetica
                 }
 
                 // Save the counts of inserted and updated records
-                System.Threading.Interlocked.Add( ref this.count_inserted, response.count_inserted );
-                System.Threading.Interlocked.Add( ref this.count_updated, response.count_updated );
+                System.Threading.Interlocked.Add( ref _countInserted, response.count_inserted );
+                System.Threading.Interlocked.Add( ref _countUpdated, response.count_updated );
             }
             catch ( Exception ex )
             {
@@ -344,8 +349,8 @@ namespace kinetica
                         queue.Add( records[ j ] );
                     }
 
-                    // Rethrow
-                    throw ex;
+                    // Rethrow, preserving the original stack trace
+                    throw;
                 }  // end try-catch
             }  // end outer for loop
         }  // end insert( records )
@@ -409,8 +414,8 @@ namespace kinetica
                         .ConfigureAwait(false);
                 }
 
-                System.Threading.Interlocked.Add(ref this.count_inserted, response.count_inserted);
-                System.Threading.Interlocked.Add(ref this.count_updated, response.count_updated);
+                System.Threading.Interlocked.Add(ref _countInserted, response.count_inserted);
+                System.Threading.Interlocked.Add(ref _countUpdated, response.count_updated);
 
                 return new IngestionResult(response.count_inserted, response.count_updated, 1);
             }

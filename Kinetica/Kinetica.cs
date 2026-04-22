@@ -132,13 +132,13 @@ namespace kinetica
         private readonly IHttpTransport _transport;
 
         // private string authorization;
-        private volatile System.Collections.Concurrent.ConcurrentDictionary<string, KineticaType> knownTypes = new();
+        private ConcurrentDictionary<string, KineticaType> knownTypes = new();
 
         // private type label to type ID lookup table
-        private Dictionary<string, string> typeNameLookup = [];
+        private ConcurrentDictionary<string, string> typeNameLookup = new();
 
         // private object class type to KineticaType lookup table
-        private Dictionary<Type, KineticaType> kineticaTypeLookup = [];
+        private ConcurrentDictionary<Type, KineticaType> kineticaTypeLookup = new();
 
         /// <summary>
         /// API Constructor
@@ -267,8 +267,7 @@ namespace kinetica
         public void SetKineticaSourceClassToTypeMapping( Type? objectType, KineticaType kineticaType )
         {
             if ( objectType != null )
-                this.kineticaTypeLookup.Add( objectType, kineticaType );
-            return;
+                this.kineticaTypeLookup[objectType] = kineticaType;
         }  // end SetKineticaSourceClassToTypeMapping
 
 

@@ -7,8 +7,6 @@ namespace kinetica
     [Serializable()]
     public class KineticaException : System.Exception
     {
-        private string message;
-
         /// <summary>
         /// HTTP status code returned by the Kinetica server, or <c>null</c>
         /// for client-side failures (serialization, network disconnect, etc.).
@@ -41,8 +39,12 @@ namespace kinetica
             info.AddValue("StatusCode", StatusCode ?? 0);
         }
 
-        public string what() { return message; }
+        /// <inheritdoc cref="Exception.Message"/>
+        /// <remarks>Prefer reading <see cref="Exception.Message"/> directly. This method exists only for backwards compatibility.</remarks>
+        [Obsolete("Use the Message property instead.")]
+        public string what() => Message;
 
-        public override string ToString() { return "KineticaException: " + message; }
+        /// <inheritdoc />
+        public override string ToString() => $"KineticaException: {Message}";
     }
 }
