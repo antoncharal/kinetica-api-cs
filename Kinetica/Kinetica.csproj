@@ -1,10 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\Avro\Avro.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <PackageReference Include="Apache.Avro" />
     <PackageReference Include="Newtonsoft.Json" />
   </ItemGroup>
 
