@@ -70,9 +70,8 @@ public sealed class AsyncContractTests
     [Fact]
     public async Task AddTableTypeAsync_PreCancelledToken_ThrowsOperationCanceledException()
     {
-        var (sdk, transport) = BuildSdk();
-        // Return a plausible ShowTableResponse so decoding does not fail first.
-        transport.ResponseBytes = AvroTestHelpers.BuildShowSystemPropertiesResponse();
+        var (sdk, _) = BuildSdk();
+        // ResponseBytes don't matter — the pre-cancel check fires before any decode.
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -103,7 +102,7 @@ public sealed class AsyncContractTests
     [Fact]
     public async Task SubmitRequestAsync_ParallelFanOut_Completes()
     {
-        var (sdk, _) = BuildSdk();
+        var (sdk, transport) = BuildSdk();
 
         var tasks = Enumerable.Range(0, 100)
             .Select(_ => sdk.SubmitRequestAsync<ShowSystemPropertiesResponse>(
@@ -116,6 +115,8 @@ public sealed class AsyncContractTests
         results.Length.ShouldBe(100);
         foreach (var r in results)
             r.ShouldNotBeNull();
+
+        transport.PostAsyncInvocations.ShouldBe(100);
     }
 
     // -------------------------------------------------------------------------
@@ -128,19 +129,18 @@ public sealed class AsyncContractTests
         var responseBytes = AvroTestHelpers.BuildShowSystemPropertiesResponse(
             new Dictionary<string, string> { ["version"] = "7.2.0.0" });
 
-        var (sdk, _) = BuildSdk();
-        // Override bytes after construction so both calls use the same payload.
-        var (sdkA, transportA) = BuildSdk();
-        transportA.ResponseBytes = responseBytes;
-        var (sdkB, transportB) = BuildSdk();
-        transportB.ResponseBytes = responseBytes;
+        var (sdkSync, transportSync) = BuildSdk();
+        transportSync.ResponseBytes = responseBytes;
+        var (sdkAsync, transportAsync) = BuildSdk();
+        transportAsync.ResponseBytes = responseBytes;
 
-        var syncResult  = sdkA.showSystemProperties();
-        var asyncResult = await sdkB.SubmitRequestAsync<ShowSystemPropertiesResponse>(
+        var syncResult  = sdkSync.showSystemProperties();
+        var asyncResult = await sdkAsync.SubmitRequestAsync<ShowSystemPropertiesResponse>(
             "/show/system/properties",
             new ShowSystemPropertiesRequest());
 
         syncResult.property_map["version"].ShouldBe(asyncResult.property_map["version"]);
+        transportSync.LastBody.ShouldBe(transportAsync.LastBody);
     }
 
     // -------------------------------------------------------------------------
