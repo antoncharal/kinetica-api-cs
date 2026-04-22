@@ -6,16 +6,41 @@ using System.Text.RegularExpressions;
 namespace kinetica.Utils
 {
     /// <summary>
-    /// A list of worker URLs to use for multi-head ingest.
+    /// An ordered, read-only list of worker URLs used for multi-head ingest.
     /// </summary>
-    public sealed class WorkerList : List<System.Uri>
+    /// <remarks>
+    /// Consumers may only read the list. Mutation is intentionally restricted
+    /// to <see cref="Add"/> so that rank-order invariants (rank-1, rank-2, …)
+    /// cannot be silently broken by callers.
+    /// </remarks>
+    public sealed class WorkerList : IReadOnlyList<System.Uri>
     {
+        private readonly List<System.Uri> _workers = [];
+
+        /// <inheritdoc />
+        public System.Uri this[int index] => _workers[index];
+
+        /// <inheritdoc />
+        public int Count => _workers.Count;
+
+        /// <inheritdoc />
+        public IEnumerator<System.Uri> GetEnumerator() => _workers.GetEnumerator();
+
+        /// <inheritdoc />
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _workers.GetEnumerator();
+
         /// <summary>
-        /// Creates an empty {@link WorkerList} that can be populated manually
-        /// with worker URLs to support multi-head ingest.Note that worker URLs
-        /// must be added in rank order, starting with rank 1, and all worker
-        /// ranks must be included; otherwise insertion may fail for certain
-        /// data types.
+        /// Appends a worker URL to the end of the list. When constructing a
+        /// <see cref="WorkerList"/> manually, add URLs in rank order starting
+        /// with rank 1; all worker ranks must be present.
+        /// </summary>
+        public void Add(System.Uri url) => _workers.Add(url);
+
+        /// <summary>
+        /// Creates an empty <see cref="WorkerList"/> that can be populated manually
+        /// with worker URLs to support multi-head ingest. Worker URLs must be added
+        /// in rank order, starting with rank 1, and all worker ranks must be included;
+        /// otherwise insertion may fail for certain data types.
         /// </summary>
         public WorkerList() { }
 

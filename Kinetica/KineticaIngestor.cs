@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -118,13 +119,6 @@ namespace kinetica
 
             // Set up the worker queues
             // -------------------------
-            // Do we update records if there are matching primary keys in the
-            // database already?
-            bool updateOnExistingPk = ( (options != null)
-                                           && options.ContainsKey( InsertRecordsRequest<T>.Options.UPDATE_ON_EXISTING_PK )
-                                           && options[ InsertRecordsRequest<T>.Options.UPDATE_ON_EXISTING_PK ].Equals( InsertRecordsRequest<T>.Options.TRUE ) );
-            // Do T type records have a primary key?
-            bool hasPrimaryKey = (this.primaryKeyBuilder != null);
             this.workerQueues = [];
             try
             {
@@ -145,7 +139,7 @@ namespace kinetica
                         strWorkerUrl = strWorkerUrl.EndsWith('/') ? strWorkerUrl[..^1] : strWorkerUrl;
                         string insert_records_worker_url_str = $"{strWorkerUrl}/insert/records";
                         System.Uri url = new( insert_records_worker_url_str );
-                        Utils.WorkerQueue<T> worker_queue = new( url, batchSize, hasPrimaryKey, updateOnExistingPk );
+                        Utils.WorkerQueue<T> worker_queue = new( url, batchSize );
                         this.workerQueues.Add( worker_queue );
                     }
 
@@ -164,7 +158,7 @@ namespace kinetica
                     strWorkerUrl = strWorkerUrl.EndsWith('/') ? strWorkerUrl[..^1] : strWorkerUrl;
                     string insertRecordsUrlStr = $"{strWorkerUrl}/insert/records";
                     System.Uri url = new( insertRecordsUrlStr );
-                    Utils.WorkerQueue<T> worker_queue = new( url, batchSize, hasPrimaryKey, updateOnExistingPk );
+                    Utils.WorkerQueue<T> worker_queue = new( url, batchSize );
                     this.workerQueues.Add( worker_queue );
                     this.routingTable = null;
                 }
@@ -362,21 +356,59 @@ namespace kinetica
 
         /// <summary>
         /// Ensures all queued records are flushed asynchronously.
+        /// Worker queues are drained in parallel with bounded concurrency,
+        /// matching the fan-out behaviour of <see cref="InsertAsync(IList{T}, CancellationToken)"/>.
         /// </summary>
         public async Task<IngestionResult> FlushAsync(CancellationToken cancellationToken = default)
         {
+            // Drain every worker queue upfront (each flush() is lock-guarded internally).
+            var pending = this.workerQueues
+                .Select(wq => (queue: wq.flush(), wq.url))
+                .Where(p => p.queue.Count > 0)
+                .ToList();
+
+            if (pending.Count == 0)
+                return new IngestionResult(0, 0, 0);
+
+            var maxConcurrency = Math.Min(pending.Count, Environment.ProcessorCount);
+            using var gate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+            var results    = new System.Collections.Concurrent.ConcurrentBag<IngestionResult>();
+            var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+            var tasks = pending.Select(async p =>
+            {
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    results.Add(await FlushAsync(p.queue, p.url, cancellationToken).ConfigureAwait(false));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)               { exceptions.Add(ex); }
+                finally                            { gate.Release(); }
+            }).ToList();
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException oce)
+            {
+                if (!exceptions.IsEmpty)
+                    throw new AggregateException(exceptions.Prepend(oce));
+                throw;
+            }
+
+            if (!exceptions.IsEmpty)
+                throw new AggregateException(exceptions);
+
             long totalInserted  = 0;
             long totalUpdated   = 0;
             int  flushedBatches = 0;
-
-            foreach (Utils.WorkerQueue<T> workerQueue in this.workerQueues)
+            foreach (var r in results)
             {
-                var queue = workerQueue.flush();
-                var result = await FlushAsync(queue, workerQueue.url, cancellationToken)
-                    .ConfigureAwait(false);
-                totalInserted  += result.Inserted;
-                totalUpdated   += result.Updated;
-                flushedBatches += result.FlushedBatches;
+                totalInserted  += r.Inserted;
+                totalUpdated   += r.Updated;
+                flushedBatches += r.FlushedBatches;
             }
 
             return new IngestionResult(totalInserted, totalUpdated, flushedBatches);

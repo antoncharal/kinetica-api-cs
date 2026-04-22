@@ -14,10 +14,7 @@ namespace kinetica.Utils
         private readonly object _gate = new();
         public System.Uri url { get; private set; }
         private readonly int capacity;
-        private readonly bool has_primary_key;
-        private readonly bool update_on_existing_pk;
         private List<T> queue;
-        private Dictionary<RecordKey, int> primary_key_map;
 
 
         /// <summary>
@@ -35,13 +32,11 @@ namespace kinetica.Utils
 
 
         /// <summary>
-        /// Creates an insertion queue for a given worker.
+        /// Creates an insertion queue for a given worker with the given capacity.
         /// </summary>
         /// <param name="url"></param>
         /// <param name="capacity"></param>
-        /// <param name="has_primary_key"></param>
-        /// <param name="update_on_existing_pk"></param>
-        public WorkerQueue(System.Uri url, int capacity, bool has_primary_key, bool update_on_existing_pk)
+        public WorkerQueue(System.Uri url, int capacity)
         {
             this.url = url;
             this.capacity = capacity;

@@ -71,9 +71,18 @@ namespace kinetica
             public bool UseSnappy { get; set; } = false;
 
             /// <summary>
-            /// Thread Count
+            /// Thread Count. Must be ≥ 1.
             /// </summary>
-            public int ThreadCount { get; set; } = 1;
+            public int ThreadCount
+            {
+                get => _threadCount;
+                set
+                {
+                    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+                    _threadCount = value;
+                }
+            }
+            private int _threadCount = 1;
 
             /// <summary>
             /// Optional: HTTP request timeout in seconds. Defaults to 100, matching
@@ -124,9 +133,18 @@ namespace kinetica
         public bool UseSnappy { get; set; } = false;
 
         /// <summary>
-        /// Thread Count
+        /// Thread Count. Must be ≥ 1.
         /// </summary>
-        public int ThreadCount { get; set; } = 1;
+        public int ThreadCount
+        {
+            get => _threadCount;
+            set
+            {
+                ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+                _threadCount = value;
+            }
+        }
+        private int _threadCount = 1;
 
         // HTTP transport — default uses HttpClientTransport; tests inject a fake.
         private readonly IHttpTransport _transport;

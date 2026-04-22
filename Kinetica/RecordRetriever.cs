@@ -24,7 +24,6 @@ namespace kinetica
         private Utils.RecordKeyBuilder<T> shard_key_builder;
         private IList<int> routing_table;
         private IList<Utils.WorkerQueue<T>> worker_queues;
-        private Random random;
 
 
         /// <summary>
@@ -97,8 +96,6 @@ namespace kinetica
                 throw new KineticaException(ex.ToString());
             }
 
-            // Create the random number generator
-            this.random = new Random((int)DateTime.Now.Ticks);
         }   // end constructor RecordRetriever
 
 
