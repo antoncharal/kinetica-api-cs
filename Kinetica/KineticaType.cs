@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Avro;
 using Newtonsoft.Json.Linq;
 
@@ -186,6 +188,55 @@ namespace kinetica
             {
                 throw new KineticaException($"Type {typeId} does not exist.");
             }
+
+            return new KineticaType(response.labels[0], response.type_schemas[0], response.properties[0]);
+        }
+
+        /// <summary>
+        /// Async overload of <see cref="fromTable"/>.  Cancellable, non-blocking.
+        /// </summary>
+        public static async Task<KineticaType> FromTableAsync(
+            Kinetica kinetica,
+            string tableName,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await kinetica
+                .SubmitRequestAsync<ShowTableResponse>("/show/table", new ShowTableRequest(tableName),
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            var typeIdCount = response.type_ids.Count;
+            if (typeIdCount == 0)
+                throw new KineticaException($"Table {tableName} does not exist.");
+
+            string typeId = response.type_ids[0];
+            if (typeIdCount > 1)
+            {
+                for (int i = 1; i < typeIdCount; ++i)
+                {
+                    if (response.type_ids[i] != typeId)
+                        throw new KineticaException($"Table {tableName} is not homogeneous.");
+                }
+            }
+
+            return new KineticaType(response.type_labels[0], response.type_schemas[0], response.properties[0], typeId);
+        }
+
+        /// <summary>
+        /// Async overload of <see cref="fromTypeID"/>.  Cancellable, non-blocking.
+        /// </summary>
+        public static async Task<KineticaType> FromTypeIDAsync(
+            Kinetica kinetica,
+            string typeId,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await kinetica
+                .SubmitRequestAsync<ShowTypesResponse>("/show/types", new ShowTypesRequest(typeId, ""),
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            if (response.type_ids.Count < 1)
+                throw new KineticaException($"Type {typeId} does not exist.");
 
             return new KineticaType(response.labels[0], response.type_schemas[0], response.properties[0]);
         }
