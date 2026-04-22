@@ -26,6 +26,19 @@ namespace kinetica
     /// <typeparam name="T">The type of object being inserted.</typeparam>
     public sealed class KineticaIngestor<T>
     {
+        /// <summary>
+        /// Thrown when one or more records cannot be inserted.
+        /// </summary>
+        /// <remarks>
+        /// <b>Design note (E7 — deferred):</b>
+        /// Ideally this exception would live at the <c>kinetica</c> namespace level so that
+        /// callers could <c>catch (InsertException)</c> without needing to know about
+        /// <c>KineticaIngestor&lt;T&gt;</c>.  Promoting it is a breaking API change
+        /// (the fully-qualified name changes from
+        /// <c>kinetica.KineticaIngestor&lt;T&gt;.InsertException</c> to
+        /// <c>kinetica.InsertException</c>) and is therefore deferred to the next major
+        /// version bump.
+        /// </remarks>
         [Serializable]
         public class InsertException : KineticaException
         {
@@ -55,7 +68,15 @@ namespace kinetica
 
         // KineticaIngestor Members:
         // =========================
-        internal Kinetica KineticaDb { get; }
+
+        // Stored as the interface so test doubles can be injected via the internal constructor.
+        private readonly IKineticaClient _kdb;
+
+        /// <summary>
+        /// The underlying Kinetica client.  Internal — use <see cref="Options"/> and the
+        /// public insertion methods rather than reaching into the client directly.
+        /// </summary>
+        internal Kinetica KineticaDb => (Kinetica)_kdb;
         public string TableName { get; }
         public int BatchSize { get; }
 
@@ -66,7 +87,7 @@ namespace kinetica
         private readonly Dictionary<string, string> _options;
 
         [Obsolete("Use KineticaDb instead.")]
-        internal Kinetica kineticaDB => KineticaDb;
+        internal Kinetica kineticaDB => (Kinetica)_kdb;
 
         [Obsolete("Use TableName instead.")]
         public string table_name => TableName;
@@ -92,24 +113,27 @@ namespace kinetica
 
 
         /// <summary>
-        /// 
+        /// Creates a <see cref="KineticaIngestor{T}"/> with the specified parameters.
         /// </summary>
-        /// <param name="kdb"></param>
-        /// <param name="tableName"></param>
-        /// <param name="batchSize"></param>
-        /// <param name="ktype"></param>
-        /// <param name="options"></param>
-        /// <param name="workers"></param>
         public KineticaIngestor( Kinetica kdb, string tableName,
                                  int batchSize, KineticaType ktype,
                                  Dictionary<string, string>? options = null,
                                  Utils.WorkerList? workers = null )
+            : this( (IKineticaClient)kdb, tableName, batchSize, ktype, options, workers ) { }
+
+        /// <summary>
+        /// Internal constructor that accepts an <see cref="IKineticaClient"/> directly,
+        /// enabling injection of test doubles via <c>InternalsVisibleTo</c>.
+        /// </summary>
+        internal KineticaIngestor( IKineticaClient kdb, string tableName,
+                                   int batchSize, KineticaType ktype,
+                                   Dictionary<string, string>? options = null,
+                                   Utils.WorkerList? workers = null )
         {
-            this.KineticaDb = kdb;
+            this._kdb = kdb;
             this.TableName = tableName;
             this.ktype = ktype;
 
-            // Validate and save the batch size
             if ( batchSize < 1 )
                 throw new KineticaException( $"Batch size must be greater than one; given {batchSize}." );
             this.BatchSize = batchSize;
@@ -117,81 +141,80 @@ namespace kinetica
             // Defensive copy — callers cannot mutate the ingestor's options after construction.
             _options = options is not null ? new Dictionary<string, string>(options) : [];
 
-            // Set up the primary and shard key builders
-            // -----------------------------------------
+            InitKeyBuilders();
+            InitWorkerQueues( kdb, workers );
+        }   // end constructor KineticaIngestor
+
+        /// <summary>
+        /// Resolves the primary and shard key builders for type <typeparamref name="T"/>.
+        /// Sets <see cref="primaryKeyBuilder"/> and <see cref="shardKeyBuilder"/> to
+        /// <c>null</c> when no key is defined; collapses the shard key onto the primary
+        /// key when both point to the same column set.
+        /// </summary>
+        private void InitKeyBuilders()
+        {
             this.primaryKeyBuilder = new Utils.RecordKeyBuilder<T>( true,  this.ktype );
             this.shardKeyBuilder   = new Utils.RecordKeyBuilder<T>( false, this.ktype );
 
-            // Based on the Java implementation
             if ( this.primaryKeyBuilder.hasKey() )
-            {   // There is a primary key for the given T
-                // Now check if there is a distinct shard key
+            {
                 if ( !this.shardKeyBuilder.hasKey()
                      || this.shardKeyBuilder.hasSameKey( this.primaryKeyBuilder ) )
-                    this.shardKeyBuilder = this.primaryKeyBuilder; // no distinct shard key
+                    this.shardKeyBuilder = this.primaryKeyBuilder;
             }
-            else  // there is no primary key for the given T
+            else
             {
                 this.primaryKeyBuilder = null;
-
-                // Check if there is shard key for T
                 if ( !this.shardKeyBuilder.hasKey() )
                     this.shardKeyBuilder = null;
-            }  // done setting up the key builders
+            }
+        }
 
-
-            // Set up the worker queues
-            // -------------------------
+        /// <summary>
+        /// Acquires the list of worker URLs (from the server if not provided), constructs
+        /// per-worker <see cref="Utils.WorkerQueue{T}"/> instances, and fetches the routing
+        /// table for multi-head ingest.  Falls back to a single queue pointing at the
+        /// primary server URL when multi-head is disabled.
+        /// </summary>
+        private void InitWorkerQueues( IKineticaClient kdb, Utils.WorkerList? workers )
+        {
             this.workerQueues = [];
             try
             {
-                // If no workers are given, try to get them from Kinetica
                 if ( ( workers == null ) || ( workers.Count == 0 ) )
                 {
-                    workers = new Utils.WorkerList( kdb );
+                    if ( kdb is Kinetica concreteKdb )
+                        workers = new Utils.WorkerList( concreteKdb );
+                    // If kdb is a test double, leave workers empty — single-head mode.
                 }
 
-                // If we end up with multiple workers, either given by the
-                // user or obtained from Kinetica, then use those
                 if ( ( workers != null ) && ( workers.Count > 0 ) )
                 {
-                    // Add worker queues per worker
                     foreach ( System.Uri workerUrl in workers )
                     {
                         string strWorkerUrl = workerUrl.ToString();
                         strWorkerUrl = strWorkerUrl.EndsWith('/') ? strWorkerUrl[..^1] : strWorkerUrl;
-                        string insert_records_worker_url_str = $"{strWorkerUrl}/insert/records";
-                        System.Uri url = new( insert_records_worker_url_str );
-                        Utils.WorkerQueue<T> worker_queue = new( url, batchSize );
-                        this.workerQueues.Add( worker_queue );
+                        System.Uri url = new( $"{strWorkerUrl}/insert/records" );
+                        this.workerQueues.Add( new Utils.WorkerQueue<T>( url, this.BatchSize ) );
                     }
 
-                    // Get the worker rank information from Kinetica
                     this.routingTable = kdb.adminShowShards().rank;
-                    // Check that enough worker URLs are specified
                     for ( int i = 0; i < routingTable.Count; ++i )
-                    {
                         if ( this.routingTable[i] > this.workerQueues.Count )
                             throw new KineticaException( "Not enough worker URLs specified." );
-                    }
                 }
-                else // multihead-ingest is NOT turned on; use the regular Kinetica IP address
+                else
                 {
                     string strWorkerUrl = kdb.Uri.ToString();
                     strWorkerUrl = strWorkerUrl.EndsWith('/') ? strWorkerUrl[..^1] : strWorkerUrl;
-                    string insertRecordsUrlStr = $"{strWorkerUrl}/insert/records";
-                    System.Uri url = new( insertRecordsUrlStr );
-                    Utils.WorkerQueue<T> worker_queue = new( url, batchSize );
-                    this.workerQueues.Add( worker_queue );
+                    System.Uri url = new( $"{strWorkerUrl}/insert/records" );
+                    this.workerQueues.Add( new Utils.WorkerQueue<T>( url, this.BatchSize ) );
                     this.routingTable = null;
                 }
             }
-            catch ( Exception ex )
-            {
-                throw new KineticaException( ex.ToString() );
-            }
-
-        }   // end constructor KineticaIngestor
+            catch ( KineticaException ) { throw; }
+            catch ( Exception ex ) { throw new KineticaException( ex.ToString() ); }
+        }
 
 
         /// <summary>
@@ -284,18 +307,18 @@ namespace kinetica
                 // -------------------------------------------------------
                 // Encode the records into binary
                 List<byte[]> encodedQueue = [];
-                foreach ( var record in queue ) encodedQueue.Add( this.KineticaDb.AvroEncode( record ) );
+                foreach ( var record in queue ) encodedQueue.Add( _kdb.AvroEncode( record ) );
                 RawInsertRecordsRequest request = new( this.TableName, encodedQueue, this._options);
 
                 InsertRecordsResponse response = new();
 
                 if ( url == null )
                 {
-                    response = this.KineticaDb.insertRecordsRaw( request );
+                    response = _kdb.insertRecordsRaw( request );
                 }
                 else
                 {
-                    response = this.KineticaDb.SubmitRequest<InsertRecordsResponse>( url, request );
+                    response = _kdb.SubmitRequest<InsertRecordsResponse>( url, request );
                 }
 
                 // Save the counts of inserted and updated records
@@ -460,7 +483,7 @@ namespace kinetica
             {
                 List<byte[]> encodedQueue = [];
                 foreach (var record in queue)
-                    encodedQueue.Add(this.KineticaDb.AvroEncode(record));
+                    encodedQueue.Add(_kdb.AvroEncode(record));
 
                 var request = new RawInsertRecordsRequest(this.TableName, encodedQueue, this._options);
 
@@ -607,4 +630,5 @@ namespace kinetica
 
 
 }  // end namespace kinetica
+
 

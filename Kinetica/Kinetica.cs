@@ -38,7 +38,7 @@ namespace kinetica
     /// <summary>
     /// API to talk to Kinetica Database
     /// </summary>
-    public sealed partial class Kinetica : IDisposable
+    public sealed partial class Kinetica : IDisposable, IKineticaClient
     {
         private bool _disposed;
         /// <summary>
@@ -167,14 +167,12 @@ namespace kinetica
         // HTTP transport — default uses HttpClientTransport; tests inject a fake.
         private readonly IHttpTransport _transport;
 
-        // private string authorization;
-        private ConcurrentDictionary<string, KineticaType> knownTypes = new();
-
-        // private type label to type ID lookup table
-        private ConcurrentDictionary<string, string> typeNameLookup = new();
-
-        // private object class type to KineticaType lookup table
-        private ConcurrentDictionary<Type, KineticaType> kineticaTypeLookup = new();
+        /// <summary>
+        /// Manages the Avro type-ID, label, and CLR-type lookups for known Kinetica types.
+        /// Extracted from inline <see cref="ConcurrentDictionary{TKey, TValue}"/> fields to
+        /// satisfy the Single Responsibility Principle (E1b).
+        /// </summary>
+        private readonly Internal.KineticaTypeRegistry _typeRegistry = new();
 
         /// <summary>
         /// API Constructor
@@ -200,7 +198,7 @@ namespace kinetica
                 Username = options.Username;
                 Password = options.Password;
                 OauthToken = options.OauthToken;
-                Authorization = CreateAuthorizationHeader();
+                Authorization = Internal.AuthorizationHeaderBuilder.Create( options.Username, options.Password, options.OauthToken );
                 // Clear plaintext credentials immediately after the Authorization header
                 // is built — they are not needed beyond this point.
                 Password = null;
@@ -208,21 +206,6 @@ namespace kinetica
                 UseSnappy = options.UseSnappy;
                 ThreadCount = options.ThreadCount;
             }
-        }
-
-        internal string? CreateAuthorizationHeader() {
-            string? authorization = null;
-            // Handle authorization
-            if( OauthToken != null && OauthToken.Length > 0 ) {
-                authorization = "Bearer " + OauthToken;
-            }
-            else if ( ( Username != null && ( Username.Length > 0 ) ) || ( Password != null && ( Password.Length > 0 ) ) )
-            {
-                authorization = ( "Basic " +
-                                    Convert.ToBase64String( Encoding.GetEncoding( "ISO-8859-1" ).GetBytes( Username + ":" + Password ) ) );
-            }
-
-            return authorization;
         }
 
         /// <summary>
@@ -239,7 +222,7 @@ namespace kinetica
                 KineticaType ktype = KineticaType.FromTable( this, tableName );
                 if ( ktype.TypeId == null )
                     throw new KineticaException( $"Could not get type ID for table '{tableName}'" );
-                this.knownTypes.TryAdd( ktype.TypeId, ktype );
+                this._typeRegistry.TryAddByTypeId( ktype.TypeId, ktype );
 
                 // Save a mapping of the object to the KineticaType
                 if ( obj_type != null )
@@ -268,7 +251,7 @@ namespace kinetica
                     .ConfigureAwait(false);
                 if (ktype.TypeId == null)
                     throw new KineticaException($"Could not get type ID for table '{tableName}'");
-                this.knownTypes.TryAdd(ktype.TypeId, ktype);
+                this._typeRegistry.TryAddByTypeId(ktype.TypeId, ktype);
                 if (obj_type != null)
                     this.SetKineticaSourceClassToTypeMapping(obj_type, ktype);
             }
@@ -290,8 +273,8 @@ namespace kinetica
         /// <param name="kineticaType">The associated KinetiaType object.</param>
         public void SetKineticaSourceClassToTypeMapping( Type? objectType, KineticaType kineticaType )
         {
-            if ( objectType != null )
-                this.kineticaTypeLookup[objectType] = kineticaType;
+            if ( objectType is not null )
+                this._typeRegistry.MapObjectTypeToKineticaType( objectType, kineticaType );
         }  // end SetKineticaSourceClassToTypeMapping
 
 
@@ -680,6 +663,44 @@ namespace kinetica
             GC.SuppressFinalize(this);
         }
 
+        // -----------------------------------------------------------------------
+        // IKineticaClient — explicit interface implementations
+        //
+        // Several of the methods required by the interface are `internal` on
+        // Kinetica (e.g. SubmitRequest, AvroEncode) or have slightly different
+        // parameter lists to the no-arg/short-form callers used by KineticaIngestor
+        // and RecordRetriever.  Explicit implementations bridge that gap without
+        // widening any method's public accessibility.
+        // -----------------------------------------------------------------------
+
+        /// <inheritdoc cref="IKineticaClient.adminShowShards"/>
+        AdminShowShardsResponse IKineticaClient.adminShowShards() => adminShowShards();
+
+        /// <inheritdoc cref="IKineticaClient.AvroEncode"/>
+        byte[] IKineticaClient.AvroEncode( object obj ) => AvroEncode( obj );
+
+        /// <inheritdoc cref="IKineticaClient.insertRecordsRaw"/>
+        InsertRecordsResponse IKineticaClient.insertRecordsRaw( RawInsertRecordsRequest request ) => insertRecordsRaw( request );
+
+        /// <inheritdoc cref="IKineticaClient.SubmitRequest{TResponse}(Uri,object,bool,CancellationToken)"/>
+        TResponse IKineticaClient.SubmitRequest<TResponse>( Uri url, object request, bool avroEncoding, CancellationToken ct )
+            => SubmitRequest<TResponse>( url, request, avroEncoding, ct );
+
+        /// <inheritdoc cref="IKineticaClient.SubmitRequestAsync{TResponse}(Uri,object,bool,CancellationToken)"/>
+        Task<TResponse> IKineticaClient.SubmitRequestAsync<TResponse>( Uri url, object request, bool avroEncoding, CancellationToken ct )
+            => SubmitRequestAsync<TResponse>( url, request, avroEncoding, ct );
+
+        /// <inheritdoc cref="IKineticaClient.SubmitRequestAsync{TResponse}(string,object,bool,CancellationToken)"/>
+        Task<TResponse> IKineticaClient.SubmitRequestAsync<TResponse>( string endpoint, object request, bool avroEncoding, CancellationToken ct )
+            => SubmitRequestAsync<TResponse>( endpoint, request, avroEncoding, ct );
+
+        /// <inheritdoc cref="IKineticaClient.getRecords{T}"/>
+        GetRecordsResponse<T> IKineticaClient.getRecords<T>( GetRecordsRequest request ) => getRecords<T>( request );
+
+        /// <inheritdoc cref="IKineticaClient.DecodeRawBinaryDataUsingRecordType{T}"/>
+        IReadOnlyList<T> IKineticaClient.DecodeRawBinaryDataUsingRecordType<T>( KineticaType recordType, IList<byte[]> recordsBinary )
+            => DecodeRawBinaryDataUsingRecordType<T>( recordType, recordsBinary );
+
         private void SetDecoderIfMissing(string typeId, string label, string schemaString, IDictionary<string, IList<string>> properties)
         {
             // If the table is a collection, it does not have a proper type so ignore it
@@ -689,11 +710,7 @@ namespace kinetica
                 return;
             }
 
-            knownTypes.GetOrAdd(typeId, (s) =>
-            {
-                return new KineticaType(label, schemaString, properties);
-            });
-            typeNameLookup[label] = typeId;
+            _typeRegistry.RegisterIfAbsent( typeId, label, schemaString, properties );
         }
 
 
@@ -702,16 +719,7 @@ namespace kinetica
         /// </summary>
         /// <param name="typeName">The label/name of the type.</param>
         /// <returns></returns>
-        private KineticaType? GetType(string typeName)
-        {
-            KineticaType? type = null;
-            if (typeNameLookup.TryGetValue(typeName, out string? typeId))
-            {
-                knownTypes.TryGetValue(typeId, out type);
-            }
-
-            return type;
-        }
+        private KineticaType? GetType(string typeName) => _typeRegistry.FindByLabel( typeName );
 
 
         /// <summary>
@@ -719,13 +727,7 @@ namespace kinetica
         /// </summary>
         /// <param name="objectType">The type of the object whose associated KineticaType we need.</param>
         /// <returns></returns>
-        private KineticaType? LookupKineticaType( Type objectType )
-        {
-            if (!kineticaTypeLookup.TryGetValue(objectType, out KineticaType? value))
-                return null; // none found
-
-            return value;
-        }  // LookupKineticaType()
+        private KineticaType? LookupKineticaType( Type objectType ) => _typeRegistry.FindByObjectType( objectType );
 
 
         /// <summary>

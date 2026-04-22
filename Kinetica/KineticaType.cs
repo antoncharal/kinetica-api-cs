@@ -271,150 +271,97 @@ namespace kinetica
                 throw new KineticaException( ex.ToString() );
             }
 
-            // Create a delegate for checking if a field/column is nullable
-            // ------------------------------------------------------------
-            // The first parameter is the column name, the second is the JSON object
-            var isColumnNullable = new Func<string, JObject, bool>( (columnName, schemaJson) => {
-                // Find the appropriate field
-                bool foundField = false;
-                JToken? fieldList = schemaJson["fields"];
-                if (fieldList != null)
-                {
-                    foreach (var field in fieldList)
-                    {
-                        if ((string?)field["name"] == columnName)
-                        {
-                            foundField = true; // found it!
-                            // Get the type and see if it's a nullable type
-                            // (each field is an array of the column type; so need
-                            // to extract the type element first)
-                            JToken? fieldType = field["type"];
-                            if (fieldType != null)
-                            {
-                                var typeElement = fieldType["items"];
-                                if (typeElement == null || typeElement is JValue) // not an array, so can't be nullable
-                                    return false;
-                                // If the type is an array and the second value is 'null', then it's a nullable
-                                if ((typeElement is JArray) && ((string)(typeElement as JArray)[1] == "null"))
-                                    return true;
-                                return false;
-                            }
-                        } // end if
-                    }  // end foreach
-                }
-                if ( !foundField )
-                    throw new KineticaException( $"Could not find the field named '{columnName}'" );
-                return false; // shouldn't ever get here
-            } );
-
             // Create appropriate columns and column properties
             // ------------------------------------------------
             List<Column> columns = [];
             Dictionary<string, IList<string>> columnProperties = [];
             for ( int i = 0; i < columnHeaders.Length; ++i )
             {
-                // Get the column's name
                 string column_name = (string)columnHeaders[i];
-
-                // Get the column's type in string format, which might be a property and not a primitive type
-                // (if so, then we'll have to infer the primitive type and save the property)
                 string columnTypeString = (string)columnTypes[i];
 
-                // Need to create a list for the properties of the column (we'll
-                // extract at most one from the column type)
-                List<string> columnProperty = [];
-
-                // We need to also infer the primitive type for this column
-                Column.ColumnType columnType;
-
-                // Infer the type and property from the given 'type'
-                switch ( columnTypeString )
-                {
-                    // Primitive type string (and all properties based on it)
-                    case "string":
-                        columnType = Column.ColumnType.STRING;
-                        break;
-
-                    // All properties allowed for the primitive string type
-                    case ColumnProperty.CHAR1:
-                    case ColumnProperty.CHAR2:
-                    case ColumnProperty.CHAR4:
-                    case ColumnProperty.CHAR8:
-                    case ColumnProperty.CHAR16:
-                    case ColumnProperty.CHAR32:
-                    case ColumnProperty.CHAR64:
-                    case ColumnProperty.CHAR128:
-                    case ColumnProperty.CHAR256:
-                    case ColumnProperty.DATE:
-                    case ColumnProperty.DATETIME:
-                    case ColumnProperty.DECIMAL: 
-                    case ColumnProperty.IPV4:
-                    case ColumnProperty.TIME:
-                        columnType = Column.ColumnType.STRING;
-                        columnProperty.Add( columnTypeString );
-                        break;
-
-                    // Primitive type integer
-                    case "int":
-                        columnType = Column.ColumnType.INT;
-                        break;
-
-                    // Properties allowed for the primitive integer type
-                    case ColumnProperty.INT8:
-                    case ColumnProperty.INT16:
-                        columnType = Column.ColumnType.INT;
-                        columnProperty.Add( columnTypeString );
-                        break;
-
-                    // Primitive type long
-                    case "long":
-                        columnType = Column.ColumnType.LONG;
-                        break;
-
-                    // Properties allowed for the long type
-                    case ColumnProperty.TIMESTAMP:
-                        columnType = Column.ColumnType.LONG;
-                        columnProperty.Add( columnTypeString );
-                        break;
-
-                    // Primitive type float
-                    case "float":
-                        columnType = Column.ColumnType.FLOAT;
-                        break;
-
-                    // Primitive type double
-                    case "double":
-                        columnType = Column.ColumnType.DOUBLE;
-                        break;
-
-                    // Primitive type bytes
-                    case "bytes":
-                        columnType = Column.ColumnType.BYTES;
-                        break;
-
-                    default:
-                        throw new KineticaException($"Unknown data type/property: {columnTypeString}");
-                }  // end switch
+                // Infer the primitive ColumnType and optional sub-property from the type string
+                (Column.ColumnType columnType, string? subProperty) = InferColumnTypeAndProperty( columnTypeString );
+                List<string> columnProperty = subProperty != null ? [subProperty] : [];
 
                 // Check if the column is nullable (where the column name is "column_#" as returned by Kinetica)
-                if ( isColumnNullable( $"column_{i + 1}", dynamicSchemaJson ) )
+                if ( IsColumnNullable( $"column_{i + 1}", dynamicSchemaJson ) )
                     columnProperty.Add( ColumnProperty.NULLABLE );
 
-                // Now that we have the name, the type and potentially a property for the column,
-                // create a Column type and add it to the list
                 Column column = new( column_name, columnType, columnProperty );
                 columns.Add( column );
-
-                // Also, save the column property in the column name->property map
                 columnProperties.Add( column_name, columnProperty );
-            }  // end looping over column headers and types
+            }
 
-
-            // Create and return the KineticaType object based on the columns and properties
             return new KineticaType( "", columns, columnProperties );
+
+            // Static local: checks whether a named field is declared nullable in the dynamic schema JSON.
+            // Captures nothing — allocated once, not per-call.
+            static bool IsColumnNullable( string columnName, JObject schemaJson )
+            {
+                JToken? fieldList = schemaJson["fields"];
+                if ( fieldList == null ) return false;
+
+                foreach ( var field in fieldList )
+                {
+                    if ( (string?)field["name"] != columnName ) continue;
+
+                    JToken? fieldType = field["type"];
+                    if ( fieldType == null ) return false;
+
+                    var typeElement = fieldType["items"];
+                    if ( typeElement == null || typeElement is JValue )
+                        return false;  // not an array-wrapped type
+                    if ( typeElement is JArray arr && (string?)arr[1] == "null" )
+                        return true;
+                    return false;
+                }
+
+                throw new KineticaException( $"Could not find the field named '{columnName}'" );
+            }
         }  // end fromDynamicSchema()
 
+        /// <summary>
+        /// Maps a Kinetica dynamic-schema type string to its canonical <see cref="Column.ColumnType"/>
+        /// and an optional sub-property string.  Each branch is a single concern; adding new
+        /// property strings requires only extending this method, not the caller.
+        /// </summary>
+        private static (Column.ColumnType columnType, string? subProperty) InferColumnTypeAndProperty(
+            string columnTypeString )
+        {
+            switch ( columnTypeString )
+            {
+                case "string":                 return (Column.ColumnType.STRING, null);
+                case ColumnProperty.CHAR1:
+                case ColumnProperty.CHAR2:
+                case ColumnProperty.CHAR4:
+                case ColumnProperty.CHAR8:
+                case ColumnProperty.CHAR16:
+                case ColumnProperty.CHAR32:
+                case ColumnProperty.CHAR64:
+                case ColumnProperty.CHAR128:
+                case ColumnProperty.CHAR256:
+                case ColumnProperty.DATE:
+                case ColumnProperty.DATETIME:
+                case ColumnProperty.DECIMAL:
+                case ColumnProperty.IPV4:
+                case ColumnProperty.TIME:      return (Column.ColumnType.STRING, columnTypeString);
 
+                case "int":                    return (Column.ColumnType.INT,    null);
+                case ColumnProperty.INT8:
+                case ColumnProperty.INT16:     return (Column.ColumnType.INT,    columnTypeString);
+
+                case "long":                   return (Column.ColumnType.LONG,   null);
+                case ColumnProperty.TIMESTAMP: return (Column.ColumnType.LONG,   columnTypeString);
+
+                case "float":                  return (Column.ColumnType.FLOAT,  null);
+                case "double":                 return (Column.ColumnType.DOUBLE, null);
+                case "bytes":                  return (Column.ColumnType.BYTES,  null);
+
+                default:
+                    throw new KineticaException( $"Unknown data type/property: {columnTypeString}" );
+            }
+        }
 
         /// <summary>
         /// Create a KineticaType object from properties of a record class and Kinetica column properties.

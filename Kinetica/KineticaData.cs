@@ -3,6 +3,7 @@ using Avro.IO;
 using Avro.Specific;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -130,6 +131,25 @@ namespace kinetica
 
 
         /// <summary>
+        /// Lookup table for the nine pure type-name → Avro-literal-string mappings.
+        /// Closed for modification: add new primitive mappings here without touching
+        /// the <see cref="AvroType"/> method body.
+        /// </summary>
+        private static readonly FrozenDictionary<string, string> PrimitiveAvroTypes =
+            new Dictionary<string, string>
+            {
+                ["Boolean"]   = "\"boolean\"",
+                ["Int32"]     = "\"int\"",
+                ["Int64"]     = "\"long\"",
+                ["Double"]    = "\"double\"",
+                ["Single"]    = "\"float\"",
+                ["Byte[]"]    = "\"bytes\"",
+                ["String"]    = "\"string\"",
+                ["String[]"]  = "{ \"type\":\"array\", \"items\":\"string\"}",
+                ["String[][]"] = "{ \"type\":\"array\", \"items\":{ \"type\":\"array\", \"items\":\"string\"}}",
+            }.ToFrozenDictionary();
+
+        /// <summary>
         /// Create a JSON type-string from System.Type
         /// </summary>
         /// <param name="t">System.Type to be evaluated</param>
@@ -141,18 +161,12 @@ namespace kinetica
             if ( t == null)
                 throw new KineticaException( "Null type passed to AvroType()" );
 
+            // Fast path: pure primitive-type mappings (no recursion needed)
+            if ( PrimitiveAvroTypes.TryGetValue( t.Name, out string? primitive ) )
+                return primitive;
+
             switch ( t.Name)
             {
-                case "Boolean": return "\"boolean\"";
-                case "Int32": return "\"int\"";
-                case "Int64": return "\"long\"";
-                case "Double": return "\"double\"";
-                case "Single": return "\"float\"";
-                case "Byte[]": return "\"bytes\"";
-                case "String": return "\"string\"";
-                case "String[]": return $"{{ \"type\":\"array\", \"items\":\"string\"}}";
-                case "String[][]": return $"{{ \"type\":\"array\", \"items\":{{ \"type\":\"array\", \"items\":\"string\"}}}}";
-
                 // For a nullable object, return the avro type of the underlying type (e.g. double)
                 case "Nullable`1": return AvroType(Nullable.GetUnderlyingType(t), ktype);
 

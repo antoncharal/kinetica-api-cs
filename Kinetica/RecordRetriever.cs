@@ -1,4 +1,4 @@
-﻿using Avro.IO;
+using Avro.IO;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -17,12 +17,15 @@ namespace kinetica
     /// <typeparam name="T">The type of object being inserted.</typeparam>
     public sealed class RecordRetriever<T> where T : new()
     {
+        private readonly IKineticaClient _kdb;
 
-        internal Kinetica KineticaDb { get; }
+        /// <summary>The underlying Kinetica client. Internal — do not call server methods directly.</summary>
+        internal Kinetica KineticaDb => (Kinetica)_kdb;
+
         public string TableName { get; }
 
         [Obsolete("Use KineticaDb instead.")]
-        public Kinetica kineticaDB => KineticaDb;
+        public Kinetica kineticaDB => (Kinetica)_kdb;
 
         [Obsolete("Use TableName instead.")]
         public string table_name => TableName;
@@ -32,18 +35,20 @@ namespace kinetica
         private IList<Utils.WorkerQueue<T>> worker_queues;
 
 
-        /// <summary>
-        /// Create a RecordRetriever object with the given parameters.
-        /// </summary>
-        /// <param name="kdb"></param>
-        /// <param name="table_name"></param>
-        /// <param name="ktype"></param>
-        /// <param name="workers"></param>
+        /// <summary>Creates a <see cref="RecordRetriever{T}"/> for the given table.</summary>
         public RecordRetriever( Kinetica kdb, string table_name,
                                 KineticaType ktype,
-                                Utils.WorkerList workers = null)
+                                Utils.WorkerList workers = null )
+            : this( (IKineticaClient)kdb, table_name, ktype, workers ) { }
+
+        /// <summary>
+        /// Internal constructor for test injection via <c>InternalsVisibleTo</c>.
+        /// </summary>
+        internal RecordRetriever( IKineticaClient kdb, string table_name,
+                                  KineticaType ktype,
+                                  Utils.WorkerList workers = null )
         {
-            this.KineticaDb = kdb;
+            this._kdb = kdb;
             this.TableName = table_name;
             this.ktype = ktype;
 
@@ -63,7 +68,9 @@ namespace kinetica
                 // If no workers are given, try to get them from Kinetica
                 if ((workers == null) || (workers.Count == 0))
                 {
-                    workers = new Utils.WorkerList(kdb);
+                    if (kdb is Kinetica concreteKdb)
+                        workers = new Utils.WorkerList(concreteKdb);
+                    // If kdb is a test double, leave workers empty — single-head mode.
                 }
 
                 // If we end up with multiple workers, either given by the
@@ -80,7 +87,7 @@ namespace kinetica
                     }
 
                     // Get the worker rank information from Kinetica
-                    this.routing_table = kdb.adminShowShards().rank;
+                    this.routing_table = _kdb.adminShowShards().rank;
                     // Check that enough worker URLs are specified
                     for (int i = 0; i < routing_table.Count; ++i)
                     {
@@ -90,7 +97,7 @@ namespace kinetica
                 }
                 else // multihead-ingest is NOT turned on; use the regular Kinetica IP address
                 {
-                    string get_records_url_str = ( kdb.Uri.ToString() + "get/records" );
+                    string get_records_url_str = ( _kdb.Uri.ToString() + "get/records" );
                     System.Uri url = new System.Uri( get_records_url_str );
                     Utils.WorkerQueue<T> worker_queue = new Utils.WorkerQueue<T>( url );
                     this.worker_queues.Add(worker_queue);
@@ -144,7 +151,7 @@ namespace kinetica
             decoded_response.total_number_of_records = raw_response.total_number_of_records;
 
             decoded_response.data = new List<T>(
-                kineticaDB.DecodeRawBinaryDataUsingRecordType<T>( ktype, raw_response.records_binary ) );
+                _kdb.DecodeRawBinaryDataUsingRecordType<T>( ktype, raw_response.records_binary ) );
 
             return decoded_response;
         }
@@ -165,9 +172,9 @@ namespace kinetica
                 var (request, workerUrl) = BuildRequest(record, expression);
 
                 if (workerUrl == null)
-                    return kineticaDB.getRecords<T>(request);
+                    return _kdb.getRecords<T>(request);
 
-                var raw_response = this.KineticaDb.SubmitRequest<RawGetRecordsResponse>(workerUrl, request);
+                var raw_response = _kdb.SubmitRequest<RawGetRecordsResponse>(workerUrl, request);
                 return DecodeRawResponse(raw_response);
             } catch ( KineticaException ex )
             {
@@ -231,3 +238,4 @@ namespace kinetica
     }   // end class RecordRetriever
 
 }   // end namespace kinetica
+
