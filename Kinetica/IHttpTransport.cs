@@ -22,6 +22,14 @@ namespace kinetica
         /// <summary>
         /// Synchronous POST.  Blocks the calling thread until the response is received.
         /// </summary>
+        /// <remarks>
+        /// <b>Deprecated (F1):</b> The synchronous path occupies a thread-pool thread for
+        /// the entire network round-trip, starving the pool under parallel ingestion or
+        /// ASP.NET request handlers.  Use <see cref="PostAsync"/> instead.  This member
+        /// will be removed once all auto-generated endpoints in <c>KineticaFunctions.cs</c>
+        /// have async counterparts (tracked in PR-06).
+        /// </remarks>
+        [System.Obsolete("Use PostAsync instead. The synchronous path will be removed in a future version (see PR-06).")]
         byte[] Post(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken);
 
         /// <summary>

@@ -255,10 +255,6 @@ namespace kinetica
                 if (obj_type != null)
                     this.SetKineticaSourceClassToTypeMapping(obj_type, ktype);
             }
-            catch (OperationCanceledException)
-            {
-                throw; // propagate unwrapped
-            }
             catch (KineticaException ex)
             {
                 throw new KineticaException("Error creating type from table", ex);
@@ -510,8 +506,12 @@ namespace kinetica
 
             try
             {
+                // CS0618: IHttpTransport.Post is marked [Obsolete] — the suppression is
+                // intentional; this is the one permitted callsite until PR-06 removes it.
+#pragma warning disable CS0618
                 var responseBytes = _transport.Post(
                     url, requestBytes, contentType, Authorization, cancellationToken);
+#pragma warning restore CS0618
                 return DecodeResponse(responseBytes, avroEncoding);
             }
             catch (OperationCanceledException)
@@ -601,6 +601,13 @@ namespace kinetica
                 var responseBytes = await _transport
                     .PostAsync(url, requestBytes, contentType, Authorization, cancellationToken)
                     .ConfigureAwait(false);
+
+                // Check cancellation before beginning Avro/JSON decode.  For large
+                // payloads the decode can hold the thread for noticeable time after
+                // the caller has already cancelled — failing fast here avoids that
+                // wasted work and returns control sooner.
+                cancellationToken.ThrowIfCancellationRequested();
+
                 return DecodeResponse(responseBytes, avroEncoding);
             }
             catch (OperationCanceledException)

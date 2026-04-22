@@ -245,7 +245,12 @@ namespace kinetica
         /// Determines which worker queue a record should be routed to based on
         /// the shard key and routing table (or random if no key is available).
         /// </summary>
-        private Utils.WorkerQueue<T> RouteFor(T record, out Utils.RecordKey? primaryKey)
+        /// <returns>
+        /// A tuple of the target <see cref="Utils.WorkerQueue{T}"/> and its zero-based
+        /// index in <see cref="workerQueues"/>.  The index is read directly from the
+        /// routing table — no O(n) <c>IndexOf</c> scan is needed at the call site.
+        /// </returns>
+        private (Utils.WorkerQueue<T> Queue, int Index) RouteFor(T record, out Utils.RecordKey? primaryKey)
         {
             primaryKey = null;
             Utils.RecordKey? shardKey = null;
@@ -256,11 +261,15 @@ namespace kinetica
                 shardKey = this.shardKeyBuilder.build(record);
 
             if (this.routingTable == null)
-                return this.workerQueues[0];
+                return (this.workerQueues[0], 0);
             if (shardKey == null)
-                return this.workerQueues[Random.Shared.Next(this.workerQueues.Count)];
+            {
+                int rnd = Random.Shared.Next(this.workerQueues.Count);
+                return (this.workerQueues[rnd], rnd);
+            }
 
-            return this.workerQueues[shardKey.route(this.routingTable)];
+            int idx = shardKey.route(this.routingTable);
+            return (this.workerQueues[idx], idx);
         }
 
 
@@ -338,7 +347,7 @@ namespace kinetica
         /// </summary>
         public void Insert( T record )
         {
-            var workerQueue = RouteFor(record, out var primaryKey);
+            var (workerQueue, _) = RouteFor(record, out var primaryKey);
             IList<T> queue = workerQueue.insert( record, primaryKey );
             if ( queue != null )
                 this.flush( queue, workerQueue.Url );
@@ -348,7 +357,7 @@ namespace kinetica
         [Obsolete("Use Insert() instead.")]
         public void insert( T record )
         {
-            var workerQueue = RouteFor(record, out var primaryKey);
+            var (workerQueue, _) = RouteFor(record, out var primaryKey);
 
             // Insert the record into the queue
             IList<T> queue = workerQueue.insert( record, primaryKey );
@@ -413,9 +422,27 @@ namespace kinetica
 
         /// <summary>
         /// Ensures all queued records are flushed asynchronously.
-        /// Worker queues are drained in parallel with bounded concurrency,
-        /// matching the fan-out behaviour of <see cref="InsertAsync(IList{T}, CancellationToken)"/>.
+        /// Worker queues are drained in parallel with bounded concurrency
+        /// (capped at <see cref="Environment.ProcessorCount"/>), matching the
+        /// fan-out behaviour of <see cref="InsertAsync(IList{T}, CancellationToken)"/>.
         /// </summary>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>
+        /// An <see cref="IngestionResult"/> with the aggregate inserted/updated counts
+        /// and the number of batches sent.  Returns a zero-count result when all
+        /// queues are empty.
+        /// </returns>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> fires and no bucket
+        /// failures have accumulated.  When both cancellation and bucket failures
+        /// occur, see <see cref="AggregateException"/> below.
+        /// </exception>
+        /// <exception cref="AggregateException">
+        /// Thrown when one or more worker-queue flushes fail.  Each inner exception
+        /// is an <see cref="InsertException"/> carrying the failed records and the
+        /// worker URL.  If cancellation also fired, the <see cref="OperationCanceledException"/>
+        /// is prepended to the inner exception list.
+        /// </exception>
         public async Task<IngestionResult> FlushAsync(CancellationToken cancellationToken = default)
         {
             // Drain every worker queue upfront (each flush() is lock-guarded internally).
@@ -524,7 +551,7 @@ namespace kinetica
         /// </summary>
         public async Task InsertAsync(T record, CancellationToken cancellationToken = default)
         {
-            var workerQueue = RouteFor(record, out var primaryKey);
+            var (workerQueue, _) = RouteFor(record, out var primaryKey);
 
             var queue = workerQueue.insert(record, primaryKey);
             if (queue != null)
@@ -533,22 +560,37 @@ namespace kinetica
 
         /// <summary>
         /// Queues each record for insertion asynchronously with parallel fan-out
-        /// across worker queues. Records are bucketed by their shard-routed worker,
-        /// then each bucket is inserted concurrently with bounded parallelism.
-        /// On partial failure, throws <see cref="AggregateException"/> containing
-        /// one <see cref="InsertException{T}"/> per failed bucket.
+        /// across worker queues.  Records are bucketed by their shard-routed worker
+        /// (O(1) routing — index returned directly from <c>RouteFor</c>), then each
+        /// bucket is inserted concurrently with bounded parallelism capped at
+        /// <see cref="Environment.ProcessorCount"/>.
         /// </summary>
+        /// <param name="records">The records to insert.  A zero-length list is a no-op.</param>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> fires and no bucket
+        /// failures have accumulated.  Callers awaiting this method will see
+        /// <see cref="OperationCanceledException"/> on clean cancellation.
+        /// </exception>
+        /// <exception cref="AggregateException">
+        /// Thrown when one or more buckets fail to insert.  Each inner exception is
+        /// an <see cref="InsertException"/> carrying the failed records and the
+        /// worker URL.  If cancellation also fired, the
+        /// <see cref="OperationCanceledException"/> is prepended to the inner list,
+        /// so callers should check <see cref="AggregateException.InnerExceptions"/>
+        /// rather than assuming the first inner exception indicates the root cause.
+        /// </exception>
         public async Task InsertAsync(IList<T> records, CancellationToken cancellationToken = default)
         {
             if (records.Count == 0)
                 return;
 
-            // Bucket records per worker queue.
+            // Bucket records per worker queue — RouteFor returns the index directly
+            // from the routing table, so no O(n) IndexOf scan is needed here.
             var buckets = new Dictionary<int, List<T>>();
             foreach (var record in records)
             {
-                var workerQueue = RouteFor(record, out _);
-                int index = this.workerQueues.IndexOf(workerQueue);
+                var (_, index) = RouteFor(record, out _);
                 if (!buckets.TryGetValue(index, out var list))
                     buckets[index] = list = [];
                 list.Add(record);

@@ -45,6 +45,8 @@ namespace kinetica
             _ownsClient = false;
         }
 
+        /// <inheritdoc />
+        [System.Obsolete("Use PostAsync instead. The synchronous path will be removed in a future version (see PR-06).")]
         public byte[] Post(
             string url,
             byte[] body,
@@ -54,9 +56,10 @@ namespace kinetica
         {
             using var request = BuildRequest(url, body, contentType, authorization);
             using var response = _client.Send(request, cancellationToken);
-            return ReadOrThrow(response, cancellationToken);
+            return ReadOrThrow(response);
         }
 
+        /// <inheritdoc />
         public async Task<byte[]> PostAsync(
             string url,
             byte[] body,
@@ -114,14 +117,28 @@ namespace kinetica
             return request;
         }
 
-        private static byte[] ReadOrThrow(
-            HttpResponseMessage response,
-            CancellationToken cancellationToken)
+        private static byte[] ReadOrThrow(HttpResponseMessage response)
         {
-            using var stream = response.Content.ReadAsStream(cancellationToken);
-            using var buffer = new MemoryStream();
-            stream.CopyTo(buffer);
-            var bytes = buffer.ToArray();
+            // When Content-Length is present (the common Kinetica Avro path), allocate a
+            // right-sized buffer and ReadExactly into it — single allocation, no
+            // intermediate MemoryStream + ToArray() double-allocation.
+            // Fall back to the copy-to-MemoryStream path only when the content length
+            // is unknown (chunked or not reported by the server).
+            var contentLength = response.Content.Headers.ContentLength;
+            byte[] bytes;
+            if (contentLength.HasValue && contentLength.Value <= int.MaxValue)
+            {
+                bytes = new byte[contentLength.Value];
+                using var stream = response.Content.ReadAsStream();
+                stream.ReadExactly(bytes, 0, (int)contentLength.Value);
+            }
+            else
+            {
+                using var stream = response.Content.ReadAsStream();
+                using var buffer = new MemoryStream();
+                stream.CopyTo(buffer);
+                bytes = buffer.ToArray();
+            }
 
             if (response.IsSuccessStatusCode)
                 return bytes;
