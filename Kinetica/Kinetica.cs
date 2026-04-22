@@ -434,30 +434,42 @@ namespace kinetica
         /// <typeparam name="TResponse">Kinetica Response Object Type</typeparam>
         /// <param name="url">The specific URL to send the request to</param>
         /// <param name="request">Kinetica Request Object</param>
-        /// <param name="enableCompression">Use Compression</param>
         /// <param name="avroEncoding">Use Avro Encoding</param>
+        /// <param name="cancellationToken">Optional cancellation token</param>
         /// <returns>Response Object</returns>
-        internal TResponse SubmitRequest<TResponse>( Uri url, object request, bool enableCompression = false, bool avroEncoding = true ) where TResponse : new()
+        internal TResponse SubmitRequest<TResponse>( Uri url, object request, bool avroEncoding = true, CancellationToken cancellationToken = default ) where TResponse : new()
         {
             var requestBytes = EncodeRequest( request, avroEncoding );
-            var raw = SubmitRequestRaw( url.ToString(), requestBytes, enableCompression, avroEncoding, false );
+            var raw = SubmitRequestRaw( url.ToString(), requestBytes, avroEncoding, false, cancellationToken );
             return DecodeKineticaResponse<TResponse>( raw, avroEncoding );
         }  // end SubmitRequest( URL )
 
 
         /// <summary>
-        /// Send request object to Kinetica server, and get response
+        /// Send request object to Kinetica server, and get response.
+        /// Primary overload — no compression parameter.
         /// </summary>
         /// <typeparam name="TResponse">Kinetica Response Object Type</typeparam>
         /// <param name="endpoint">Kinetica Endpoint to call</param>
         /// <param name="request">Kinetica Request Object</param>
-        /// <param name="enableCompression">Use Compression</param>
         /// <param name="avroEncoding">Use Avro Encoding</param>
+        /// <param name="cancellationToken">Optional cancellation token</param>
         /// <returns>Response Object</returns>
-        private TResponse SubmitRequest<TResponse>(string endpoint, object request, bool enableCompression = false, bool avroEncoding = true) where TResponse : new()
+        private TResponse SubmitRequest<TResponse>(string endpoint, object request, CancellationToken cancellationToken) where TResponse : new()
+        {
+            return SubmitRequest<TResponse>(endpoint, request, enableCompression: false, avroEncoding: true, cancellationToken: cancellationToken);
+        }
+
+        /// <summary>
+        /// Send request object to Kinetica server, and get response.
+        /// The <paramref name="enableCompression"/> parameter is no longer used but is
+        /// retained for backward compatibility with auto-generated <c>KineticaFunctions.cs</c>.
+        /// It will be removed when the schema processor is updated (PR-06).
+        /// </summary>
+        private TResponse SubmitRequest<TResponse>(string endpoint, object request, bool enableCompression, bool avroEncoding = true, CancellationToken cancellationToken = default) where TResponse : new()
         {
             var requestBytes = EncodeRequest( request, avroEncoding );
-            var raw = SubmitRequestRaw( endpoint, requestBytes, enableCompression, avroEncoding );
+            var raw = SubmitRequestRaw( endpoint, requestBytes, avroEncoding, cancellationToken: cancellationToken );
             return DecodeKineticaResponse<TResponse>( raw, avroEncoding );
         }  // end SubmitRequest( endpoint )
 
@@ -468,12 +480,12 @@ namespace kinetica
         /// </summary>
         /// <param name="url">Kinetica Endpoint to call (with or without the full host path)</param>
         /// <param name="requestBytes">Binary data to send</param>
-        /// <param name="enableCompression">Are we using compression?</param>
         /// <param name="avroEncoding">Use Avro encoding</param>
         /// <param name="only_endpoint_given">If true, prefix the given url
         /// with <member cref="Url" /></param>
+        /// <param name="cancellationToken">Optional cancellation token</param>
         /// <returns>RawKineticaResponse Object</returns>
-        private RawKineticaResponse? SubmitRequestRaw(string url, byte[] requestBytes, bool enableCompression, bool avroEncoding, bool only_endpoint_given = true)
+        private RawKineticaResponse? SubmitRequestRaw(string url, byte[] requestBytes, bool avroEncoding, bool only_endpoint_given = true, CancellationToken cancellationToken = default)
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(Kinetica));
@@ -486,15 +498,20 @@ namespace kinetica
             try
             {
                 var responseBytes = _transport.Post(
-                    url, requestBytes, contentType, Authorization, CancellationToken.None);
+                    url, requestBytes, contentType, Authorization, cancellationToken);
                 return DecodeResponse(responseBytes, avroEncoding);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // propagate unwrapped — matches .NET convention
             }
             catch (KineticaTransportException ex)
             {
-                // The server returned a non-2xx status and included an Avro/JSON
-                // error envelope in the body — decode it to extract the message.
-                var errorEnvelope = DecodeResponse(ex.Body, avroEncoding);
-                throw new KineticaException(errorEnvelope?.message ?? ex.Message);
+                var serverMessage = TryDecodeErrorMessage(ex.Body, avroEncoding);
+                var message = serverMessage is { Length: > 0 }
+                    ? serverMessage
+                    : $"Kinetica server returned HTTP {ex.StatusCode} for {url}.";
+                throw new KineticaException(message, ex.StatusCode, ex);
             }
             catch (Exception ex) when (ex is not KineticaException)
             {
@@ -509,6 +526,24 @@ namespace kinetica
 
             var s = Encoding.UTF8.GetString(bytes).Replace("\\U", "\\u");
             return JsonConvert.DeserializeObject<RawKineticaResponse>(s);
+        }
+
+        /// <summary>
+        /// Attempts to decode the Kinetica error envelope from a transport error body.
+        /// Returns <c>null</c> on any decode failure — a malformed error body must not
+        /// mask the original transport error.
+        /// </summary>
+        private string? TryDecodeErrorMessage(byte[] body, bool avroEncoding)
+        {
+            try
+            {
+                var envelope = DecodeResponse(body, avroEncoding);
+                return envelope?.message;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private byte[] EncodeRequest(object request, bool avroEncoding)
@@ -533,7 +568,6 @@ namespace kinetica
         private async Task<RawKineticaResponse?> SubmitRequestRawAsync(
             string url,
             byte[] requestBytes,
-            bool enableCompression,
             bool avroEncoding,
             bool only_endpoint_given = true,
             CancellationToken cancellationToken = default)
@@ -559,8 +593,11 @@ namespace kinetica
             }
             catch (KineticaTransportException ex)
             {
-                var errorEnvelope = DecodeResponse(ex.Body, avroEncoding);
-                throw new KineticaException(errorEnvelope?.message ?? ex.Message);
+                var serverMessage = TryDecodeErrorMessage(ex.Body, avroEncoding);
+                var message = serverMessage is { Length: > 0 }
+                    ? serverMessage
+                    : $"Kinetica server returned HTTP {ex.StatusCode} for {url}.";
+                throw new KineticaException(message, ex.StatusCode, ex);
             }
             catch (Exception ex) when (ex is not KineticaException)
             {
@@ -574,13 +611,12 @@ namespace kinetica
         internal async Task<TResponse> SubmitRequestAsync<TResponse>(
             Uri url,
             object request,
-            bool enableCompression = false,
             bool avroEncoding = true,
             CancellationToken cancellationToken = default) where TResponse : new()
         {
             var requestBytes = EncodeRequest(request, avroEncoding);
             var raw = await SubmitRequestRawAsync(
-                url.ToString(), requestBytes, enableCompression, avroEncoding, false, cancellationToken)
+                url.ToString(), requestBytes, avroEncoding, false, cancellationToken)
                 .ConfigureAwait(false);
             return DecodeKineticaResponse<TResponse>(raw, avroEncoding);
         }
@@ -592,13 +628,12 @@ namespace kinetica
         internal async Task<TResponse> SubmitRequestAsync<TResponse>(
             string endpoint,
             object request,
-            bool enableCompression = false,
             bool avroEncoding = true,
             CancellationToken cancellationToken = default) where TResponse : new()
         {
             var requestBytes = EncodeRequest(request, avroEncoding);
             var raw = await SubmitRequestRawAsync(
-                endpoint, requestBytes, enableCompression, avroEncoding,
+                endpoint, requestBytes, avroEncoding,
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             return DecodeKineticaResponse<TResponse>(raw, avroEncoding);

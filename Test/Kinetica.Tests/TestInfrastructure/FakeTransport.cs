@@ -25,6 +25,8 @@ namespace Kinetica.Tests.TestInfrastructure
 
         public byte[] Post(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             LastUrl               = url;
             LastBody              = body;
             LastContentType       = contentType;

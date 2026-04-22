@@ -396,7 +396,7 @@ namespace kinetica
                 {
                     response = await this.kineticaDB
                         .SubmitRequestAsync<InsertRecordsResponse>("/insert/records", request,
-                            enableCompression: true, cancellationToken: cancellationToken)
+                            cancellationToken: cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
