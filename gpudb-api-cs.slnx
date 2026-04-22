@@ -6,4 +6,7 @@
   <Folder Name="/samples/">
     <Project Path="Example/Example.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="Test/Kinetica.Tests/Kinetica.Tests.csproj" />
+  </Folder>
 </Solution>

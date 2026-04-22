@@ -8,4 +8,8 @@
     <PackageReference Include="Newtonsoft.Json" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Kinetica.Tests" />
+  </ItemGroup>
+
 </Project>
