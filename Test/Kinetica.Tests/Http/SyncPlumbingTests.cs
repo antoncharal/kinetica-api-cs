@@ -155,6 +155,26 @@ public sealed class SyncPlumbingTests
     }
 
     // -------------------------------------------------------------------------
+    // Generic exception → KineticaException wrapping (catch-all path)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void GenericException_WrappedAsKineticaException_WithInnerPreserved()
+    {
+        var transport = new FakeTransport
+        {
+            ThrowOnPost = new InvalidOperationException("connection reset by peer")
+        };
+        var sdk = new kinetica.Kinetica("http://localhost:9191", transport);
+
+        var ex = Should.Throw<KineticaException>(() => sdk.showSystemProperties());
+
+        ex.InnerException.ShouldBeOfType<InvalidOperationException>();
+        ex.Message.ShouldContain("connection reset by peer");
+        ex.StatusCode.ShouldBeNull();
+    }
+
+    // -------------------------------------------------------------------------
     // KineticaException.StatusCode
     // -------------------------------------------------------------------------
 

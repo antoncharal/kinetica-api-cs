@@ -535,12 +535,15 @@ namespace kinetica
         /// </summary>
         private string? TryDecodeErrorMessage(byte[] body, bool avroEncoding)
         {
+            if (body.Length == 0)
+                return null;
+
             try
             {
                 var envelope = DecodeResponse(body, avroEncoding);
                 return envelope?.message;
             }
-            catch
+            catch (Exception)
             {
                 return null;
             }

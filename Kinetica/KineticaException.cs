@@ -29,7 +29,17 @@ namespace kinetica
         }
 
         protected KineticaException( SerializationInfo info, StreamingContext context )
-            : base ( info, context ) { }
+            : base ( info, context )
+        {
+            StatusCode = info.GetBoolean("HasStatusCode") ? info.GetInt32("StatusCode") : null;
+        }
+
+        public override void GetObjectData( SerializationInfo info, StreamingContext context )
+        {
+            base.GetObjectData( info, context );
+            info.AddValue("HasStatusCode", StatusCode.HasValue);
+            info.AddValue("StatusCode", StatusCode ?? 0);
+        }
 
         public string what() { return message; }
 
