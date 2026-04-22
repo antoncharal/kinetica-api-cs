@@ -103,26 +103,54 @@ namespace kinetica
 
 
         /// <summary>
-        /// Retrieves records for a given shard key, optionally further limited by an
-        /// additional expression. All records matching the key and satisfying the
-        /// expression will be returned, up to the system-defined limit. For
-        /// multi-head mode the request will be sent directly to the appropriate
-        /// worker.
-        /// <br />
-        /// All fields in both the shard key and the expression must have defined
-        /// attribute indexes, unless the shard key is also a primary key and all
-        /// referenced fields are in the primary key. The expression must be
-        /// limited to basic equality and inequality comparisons that can be
-        /// evaluated using the attribute indexes.
+        /// Builds the /get/records request and resolves the target URL for a given record
+        /// and optional expression. Shared by sync and async retrieval paths.
         /// </summary>
-        /// 
-        /// <param name="record">The record based on whose shard column values
-        /// records will be fetched from the table.</param>
-        /// <param name="expression">An optional expression.  Default is
-        /// null.</param>
-        /// 
-        /// <returns>A GetRecordsResponse object with the decoded retrieved
-        /// values.</returns>
+        private (GetRecordsRequest request, Uri? workerUrl) BuildRequest(
+            T record, string expression = null)
+        {
+            string full_expression = this.shard_key_builder.buildExpression(record);
+            if (full_expression == null)
+                throw new KineticaException("No expression could be made from given record.");
+            if (expression != null)
+                full_expression = full_expression + " and (" + expression + ")";
+
+            IDictionary<string, string> options = new Dictionary<string, string>();
+            options[GetRecordsRequest.Options.EXPRESSION]        = full_expression;
+            options[GetRecordsRequest.Options.FAST_INDEX_LOOKUP] = GetRecordsRequest.Options.TRUE;
+
+            var request = new GetRecordsRequest(this.table_name, 0, Kinetica.END_OF_SET, options);
+
+            Uri? workerUrl = null;
+            if (this.routing_table != null)
+            {
+                Utils.RecordKey shard_key = this.shard_key_builder.build(record);
+                workerUrl = this.worker_queues[shard_key.route(this.routing_table)].url;
+            }
+
+            return (request, workerUrl);
+        }
+
+        private GetRecordsResponse<T> DecodeRawResponse(RawGetRecordsResponse raw_response)
+        {
+            var decoded_response = new GetRecordsResponse<T>();
+            decoded_response.table_name              = raw_response.table_name;
+            decoded_response.type_name               = raw_response.type_name;
+            decoded_response.type_schema             = raw_response.type_schema;
+            decoded_response.has_more_records        = raw_response.has_more_records;
+            decoded_response.total_number_of_records = raw_response.total_number_of_records;
+
+            kineticaDB.DecodeRawBinaryDataUsingRecordType(
+                ktype, raw_response.records_binary, decoded_response.data);
+
+            return decoded_response;
+        }
+
+
+        /// <summary>
+        /// Retrieves records for a given shard key, optionally further limited by an
+        /// additional expression.
+        /// </summary>
         public GetRecordsResponse<T> getRecordsByKey( T record,
                                                       string expression = null )
         {
@@ -131,53 +159,13 @@ namespace kinetica
 
             try
             {
-                // Build the expression
-                string full_expression = this.shard_key_builder.buildExpression( record );
-                if ( full_expression == null )
-                    throw new KineticaException( "No expression could be made from given record." );
-                if ( expression != null )
-                    full_expression = (full_expression + " and (" + expression + ")");
+                var (request, workerUrl) = BuildRequest(record, expression);
 
-                // Create the options map for the /get/records call
-                IDictionary<string, string> options = new Dictionary<string, string>();
-                options[GetRecordsRequest.Options.EXPRESSION] = full_expression;
-                options[GetRecordsRequest.Options.FAST_INDEX_LOOKUP] = GetRecordsRequest.Options.TRUE;
+                if (workerUrl == null)
+                    return kineticaDB.getRecords<T>(request);
 
-                // Create a /get/records request packet
-                GetRecordsRequest request = new GetRecordsRequest( this.table_name,
-                                                                   0, Kinetica.END_OF_SET,
-                                                                   options );
-
-                // Submit the /get/records request
-                if ( this.routing_table == null )
-                {   // No routing information is available; talk to rank-0
-                    return kineticaDB.getRecords<T>( request );
-                }
-                else // Talk to the appropriate worker rank
-                {
-                    // Create the appropriate response objects
-                    RawGetRecordsResponse raw_response     = new RawGetRecordsResponse();
-                    GetRecordsResponse<T> decoded_response = new GetRecordsResponse<T>();
-
-                    // Find the appropriate worker rank
-                    Utils.RecordKey shard_key = this.shard_key_builder.build( record );
-                    System.Uri url = this.worker_queues[ shard_key.route( this.routing_table ) ].url;
-                    // Make the call
-                    raw_response = this.kineticaDB.SubmitRequest<RawGetRecordsResponse>( url, request );
-
-                    // Set up the values of the decoded response properly
-                    decoded_response.table_name = raw_response.table_name;
-                    decoded_response.type_name = raw_response.type_name;
-                    decoded_response.type_schema = raw_response.type_schema;
-                    decoded_response.has_more_records = raw_response.has_more_records;
-                    decoded_response.total_number_of_records = raw_response.total_number_of_records;
-
-                    // Decode the records
-                    kineticaDB.DecodeRawBinaryDataUsingRecordType( ktype,
-                                                                   raw_response.records_binary,
-                                                                   decoded_response.data );
-                    return decoded_response;
-                }
+                var raw_response = this.kineticaDB.SubmitRequest<RawGetRecordsResponse>(workerUrl, request);
+                return DecodeRawResponse(raw_response);
             } catch ( KineticaException ex )
             {
                 throw new KineticaException( "Error in retrieving records by key: ", ex );
@@ -201,49 +189,21 @@ namespace kinetica
 
             try
             {
-                string full_expression = this.shard_key_builder.buildExpression(record);
-                if (full_expression == null)
-                    throw new KineticaException("No expression could be made from given record.");
-                if (expression != null)
-                    full_expression = full_expression + " and (" + expression + ")";
+                var (request, workerUrl) = BuildRequest(record, expression);
 
-                IDictionary<string, string> options = new Dictionary<string, string>();
-                options[GetRecordsRequest.Options.EXPRESSION]        = full_expression;
-                options[GetRecordsRequest.Options.FAST_INDEX_LOOKUP] = GetRecordsRequest.Options.TRUE;
-
-                var request = new GetRecordsRequest(this.table_name, 0, Kinetica.END_OF_SET, options);
-
-                if (this.routing_table == null)
+                if (workerUrl == null)
                 {
                     return await kineticaDB
                         .SubmitRequestAsync<GetRecordsResponse<T>>("/get/records", request,
                             cancellationToken: cancellationToken)
                         .ConfigureAwait(false);
                 }
-                else
-                {
-                    var raw_response     = new RawGetRecordsResponse();
-                    var decoded_response = new GetRecordsResponse<T>();
 
-                    Utils.RecordKey shard_key = this.shard_key_builder.build(record);
-                    Uri url = this.worker_queues[shard_key.route(this.routing_table)].url;
-
-                    raw_response = await kineticaDB
-                        .SubmitRequestAsync<RawGetRecordsResponse>(url, request,
-                            cancellationToken: cancellationToken)
-                        .ConfigureAwait(false);
-
-                    decoded_response.table_name              = raw_response.table_name;
-                    decoded_response.type_name               = raw_response.type_name;
-                    decoded_response.type_schema             = raw_response.type_schema;
-                    decoded_response.has_more_records        = raw_response.has_more_records;
-                    decoded_response.total_number_of_records = raw_response.total_number_of_records;
-
-                    kineticaDB.DecodeRawBinaryDataUsingRecordType(
-                        ktype, raw_response.records_binary, decoded_response.data);
-
-                    return decoded_response;
-                }
+                var raw_response = await kineticaDB
+                    .SubmitRequestAsync<RawGetRecordsResponse>(workerUrl, request,
+                        cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                return DecodeRawResponse(raw_response);
             }
             catch (OperationCanceledException)
             {
