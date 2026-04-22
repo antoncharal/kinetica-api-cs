@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using kinetica;
 
 namespace Kinetica.Tests.TestInfrastructure
@@ -13,6 +14,7 @@ namespace Kinetica.Tests.TestInfrastructure
         public byte[]? LastBody { get; private set; }
         public string? LastContentType { get; private set; }
         public string? LastAuthorization { get; private set; }
+        public CancellationToken LastCancellationToken { get; private set; }
 
         /// <summary>Bytes returned to the caller on the next <see cref="Post"/> call.</summary>
         public byte[] ResponseBytes { get; set; } = Array.Empty<byte>();
@@ -20,12 +22,13 @@ namespace Kinetica.Tests.TestInfrastructure
         /// <summary>When set, <see cref="Post"/> throws this exception instead of returning.</summary>
         public Exception? ThrowOnPost { get; set; }
 
-        public byte[] Post(string url, byte[] body, string contentType, string? authorization)
+        public byte[] Post(string url, byte[] body, string contentType, string? authorization, CancellationToken cancellationToken)
         {
-            LastUrl = url;
-            LastBody = body;
-            LastContentType = contentType;
-            LastAuthorization = authorization;
+            LastUrl               = url;
+            LastBody              = body;
+            LastContentType       = contentType;
+            LastAuthorization     = authorization;
+            LastCancellationToken = cancellationToken;
 
             if (ThrowOnPost is not null)
                 throw ThrowOnPost;
