@@ -70,7 +70,7 @@ public class KineticaRecord : Avro.Generic.GenericRecord
         }
         catch ( Exception ex )
         {
-            throw new KineticaException( ex.ToString() );
+            throw new KineticaException( ex.Message, ex );
         }
 
         IList<KineticaRecord> records = new List<KineticaRecord>();

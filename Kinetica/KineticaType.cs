@@ -347,7 +347,7 @@ public sealed class KineticaType
         }
         catch ( Exception ex )
         {
-            throw new KineticaException( ex.ToString() );
+            throw new KineticaException( ex.Message, ex );
         }
 
         // Create appropriate columns and column properties
@@ -810,7 +810,7 @@ public sealed class KineticaType
         }
         catch (Exception ex)
         {
-            throw new KineticaException(ex.ToString());
+            throw new KineticaException(ex.Message, ex);
         }
 
         var root = JObject.Parse(typeSchema);
@@ -959,7 +959,7 @@ public sealed class KineticaType
             }
             catch (Exception ex)
             {
-                throw new KineticaException(ex.ToString());
+                throw new KineticaException(ex.Message, ex);
             }
         }  // done creating the schema from the schema string
 
@@ -1012,7 +1012,7 @@ public sealed class KineticaType
         }
         catch (Exception ex)
         {
-            throw new KineticaException(ex.ToString());
+            throw new KineticaException(ex.Message, ex);
         }
 
         // Save the schema string

@@ -104,9 +104,6 @@ public class KineticaData : ISpecificRecord
     {
         string? jsonType = GetEmbeddedSchema(t);
         jsonType ??= AvroType( t, ktype );
-        // using JsonDocument doc = JsonDocument.Parse(jsonType);
-        // string v = JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
-        // Console.WriteLine(t.ToString() + "::::" + v);
         return Schema.Parse(jsonType) as RecordSchema;
     }
 

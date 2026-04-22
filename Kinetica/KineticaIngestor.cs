@@ -248,7 +248,7 @@ public sealed class KineticaIngestor<T>
             }
         }
         catch ( KineticaException ) { throw; }
-        catch ( Exception ex ) { throw new KineticaException( ex.ToString() ); }
+        catch ( Exception ex ) { throw new KineticaException( ex.Message, ex ); }
     }
 
 

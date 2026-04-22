@@ -10,7 +10,7 @@ namespace kinetica;
 /// <summary>
 /// <see cref="IHttpTransport"/> implementation backed by <see cref="HttpClient"/>
 /// with <see cref="SocketsHttpHandler"/> for connection pooling and DNS refresh.
-/// Replaces the legacy <see cref="HttpWebRequestTransport"/> as of PR-03.
+/// Replaces the legacy <c>HttpWebRequestTransport</c> removed in PR-03.
 /// </summary>
 internal sealed class HttpClientTransport : IHttpTransport, IDisposable
 {

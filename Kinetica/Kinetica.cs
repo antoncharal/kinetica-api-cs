@@ -70,6 +70,9 @@ public sealed partial class Kinetica : IDisposable, IKineticaClient
         /// <summary>
         /// Thread Count. Must be ≥ 1.
         /// </summary>
+        /// <remarks>This property has no internal effect on the client. It was reserved for a
+        /// background-executor feature that was not implemented. Setting it is a no-op.</remarks>
+        [Obsolete("ThreadCount has no internal effect and will be removed in a future version.")]
         public int ThreadCount
         {
             get => _threadCount;
@@ -161,6 +164,9 @@ public sealed partial class Kinetica : IDisposable, IKineticaClient
     /// <summary>
     /// Thread Count. Must be ≥ 1.
     /// </summary>
+    /// <remarks>This property has no internal effect on the client. It was reserved for a
+    /// background-executor feature that was not implemented.</remarks>
+    [Obsolete("ThreadCount has no internal effect and will be removed in a future version.")]
     public int ThreadCount
     {
         get => _threadCount;
@@ -213,7 +219,6 @@ public sealed partial class Kinetica : IDisposable, IKineticaClient
             Password = null;
             OauthToken = null;
             UseSnappy = options.UseSnappy;
-            ThreadCount = options.ThreadCount;
         }
     }
 
@@ -897,10 +902,4 @@ public sealed partial class Kinetica : IDisposable, IKineticaClient
         var reader = new Avro.Specific.SpecificReader<T>(schema, schema);
         return reader.Read(default, new BinaryDecoder(stream));
     }
-    /*
-    private T AvroDecode<T>(string str) where T : new()
-    {
-        return AvroDecode<T>(Encoding.UTF8.GetBytes(str));
-    }
-    */
 }  // end class Kinetica
