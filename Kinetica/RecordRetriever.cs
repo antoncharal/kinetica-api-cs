@@ -1,6 +1,8 @@
 ﻿using Avro.IO;
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 
 namespace kinetica
@@ -184,6 +186,78 @@ namespace kinetica
                 throw new KineticaException( "Error in retrieving records by key: ", ex );
             }
         }  // end getRecordsByKey()
+
+
+        /// <summary>
+        /// Async overload of <see cref="getRecordsByKey"/>.  Cancellable, non-blocking.
+        /// </summary>
+        public async Task<GetRecordsResponse<T>> GetRecordsByKeyAsync(
+            T record,
+            string expression = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (this.shard_key_builder == null)
+                throw new KineticaException("Cannot get by key from unsharded table: " + this.table_name);
+
+            try
+            {
+                string full_expression = this.shard_key_builder.buildExpression(record);
+                if (full_expression == null)
+                    throw new KineticaException("No expression could be made from given record.");
+                if (expression != null)
+                    full_expression = full_expression + " and (" + expression + ")";
+
+                IDictionary<string, string> options = new Dictionary<string, string>();
+                options[GetRecordsRequest.Options.EXPRESSION]        = full_expression;
+                options[GetRecordsRequest.Options.FAST_INDEX_LOOKUP] = GetRecordsRequest.Options.TRUE;
+
+                var request = new GetRecordsRequest(this.table_name, 0, Kinetica.END_OF_SET, options);
+
+                if (this.routing_table == null)
+                {
+                    return await kineticaDB
+                        .SubmitRequestAsync<GetRecordsResponse<T>>("/get/records", request,
+                            cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    var raw_response     = new RawGetRecordsResponse();
+                    var decoded_response = new GetRecordsResponse<T>();
+
+                    Utils.RecordKey shard_key = this.shard_key_builder.build(record);
+                    Uri url = this.worker_queues[shard_key.route(this.routing_table)].url;
+
+                    raw_response = await kineticaDB
+                        .SubmitRequestAsync<RawGetRecordsResponse>(url, request,
+                            cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+
+                    decoded_response.table_name              = raw_response.table_name;
+                    decoded_response.type_name               = raw_response.type_name;
+                    decoded_response.type_schema             = raw_response.type_schema;
+                    decoded_response.has_more_records        = raw_response.has_more_records;
+                    decoded_response.total_number_of_records = raw_response.total_number_of_records;
+
+                    kineticaDB.DecodeRawBinaryDataUsingRecordType(
+                        ktype, raw_response.records_binary, decoded_response.data);
+
+                    return decoded_response;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (KineticaException ex)
+            {
+                throw new KineticaException("Error in retrieving records by key: ", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new KineticaException("Error in retrieving records by key: ", ex);
+            }
+        }  // end GetRecordsByKeyAsync
 
     }   // end class RecordRetriever
 
