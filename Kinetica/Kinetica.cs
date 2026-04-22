@@ -120,6 +120,9 @@ namespace kinetica
         /// </summary>
         public int ThreadCount { get; set; } = 1;
 
+        // HTTP transport — default uses HttpWebRequest; tests inject a fake.
+        private readonly IHttpTransport _transport;
+
         // private string authorization;
         private volatile System.Collections.Concurrent.ConcurrentDictionary<string, KineticaType> knownTypes = new();
 
@@ -138,6 +141,7 @@ namespace kinetica
         {
             Url = url_str;
             URL = new Uri( url_str );
+            _transport = new HttpWebRequestTransport();
             if ( null != options ) // If caller specified options
             {
                 Username = options.Username;
@@ -150,6 +154,26 @@ namespace kinetica
                 UseSnappy = options.UseSnappy;
                 ThreadCount = options.ThreadCount;
                 // TODO: executor?
+            }
+        }
+
+        /// <summary>
+        /// Test constructor — accepts an injected <see cref="IHttpTransport"/>
+        /// so that unit tests can intercept HTTP calls without a live server.
+        /// </summary>
+        internal Kinetica( string url_str, IHttpTransport transport, Options? options = null )
+        {
+            Url = url_str;
+            URL = new Uri( url_str );
+            _transport = transport;
+            if ( null != options )
+            {
+                Username = options.Username;
+                Password = options.Password;
+                OauthToken = options.OauthToken;
+                Authorization = CreateAuthorizationHeader();
+                UseSnappy = options.UseSnappy;
+                ThreadCount = options.ThreadCount;
             }
         }
 
@@ -459,47 +483,18 @@ namespace kinetica
             {
                 if ( only_endpoint_given )
                     url = (Url + url);
-                var request = (HttpWebRequest)WebRequest.Create( url );
-                request.Method = "POST";
-                //request.UseDefaultCredentials = true;
-                request.ContentType = avroEncoding ? "application/octet-stream" : "application/json";
-                request.ContentLength = requestBytes.Length;
 
-                // Handle the authorization
-                if ( this.Authorization != null )
+                var contentType = avroEncoding ? "application/octet-stream" : "application/json";
+                var responseBytes = _transport.Post(url, requestBytes, contentType, Authorization);
+
+                if ( avroEncoding )
                 {
-                    request.Headers.Add( "Authorization", Authorization );
+                    return AvroDecode<RawKineticaResponse>( responseBytes );
                 }
-
-
-                // Write the binary request data
-                using ( var dataStream = request.GetRequestStream())
+                else // JSON
                 {
-                    dataStream.Write(requestBytes, 0, requestBytes.Length);
-                }
-
-                // Send to the server and await a response
-                using (var response = (HttpWebResponse)request.GetResponse())
-                {
-                    // Parse the response
-                    if (response.StatusCode == HttpStatusCode.OK)
-                    {
-                        using (var responseStream = response.GetResponseStream())
-                        {
-                            if (avroEncoding)
-                            {
-                                return AvroDecode<RawKineticaResponse>(responseStream);
-                            }
-                            else // JSON
-                            {
-                                using (StreamReader reader = new(responseStream, Encoding.UTF8))
-                                {
-                                    var responseString = reader.ReadToEnd();
-                                    return JsonConvert.DeserializeObject<RawKineticaResponse>(responseString);
-                                }
-                            }
-                        }
-                    }
+                    var responseString = Encoding.UTF8.GetString( responseBytes ).Replace( "\\U", "\\u" );
+                    return JsonConvert.DeserializeObject<RawKineticaResponse>( responseString );
                 }
             }
             catch (System.Net.WebException ex)
@@ -511,7 +506,6 @@ namespace kinetica
                 // Get the error message from the server response
                 var response = ex.Response;
                 var responseStream = response.GetResponseStream();
-                string responseString;
                 RawKineticaResponse serverResponse;
                 // Decode the response packet
                 if (avroEncoding)
@@ -522,7 +516,7 @@ namespace kinetica
                 {
                     using (StreamReader reader = new(responseStream, Encoding.UTF8))
                     {
-                        responseString = reader.ReadToEnd();
+                        var responseString = reader.ReadToEnd();
                         serverResponse = JsonConvert.DeserializeObject<RawKineticaResponse>(responseString);
                     }
                 }
