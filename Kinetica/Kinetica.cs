@@ -5,8 +5,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text;
+using System.Threading;
 
 /// \mainpage Introduction
 ///
@@ -37,8 +37,9 @@ namespace kinetica
     /// <summary>
     /// API to talk to Kinetica Database
     /// </summary>
-    public partial class Kinetica
+    public partial class Kinetica : IDisposable
     {
+        private bool _disposed;
         /// <summary>
         /// No Limit
         /// </summary>
@@ -72,6 +73,12 @@ namespace kinetica
             /// Thread Count
             /// </summary>
             public int ThreadCount { get; set; } = 1;
+
+            /// <summary>
+            /// Optional: HTTP request timeout in seconds. Defaults to 100, matching
+            /// the previous <c>HttpWebRequest.Timeout</c> default.
+            /// </summary>
+            public int? TimeoutSeconds { get; set; }
         }
 
         /// <summary>
@@ -120,7 +127,7 @@ namespace kinetica
         /// </summary>
         public int ThreadCount { get; set; } = 1;
 
-        // HTTP transport — default uses HttpWebRequest; tests inject a fake.
+        // HTTP transport — default uses HttpClientTransport; tests inject a fake.
         private readonly IHttpTransport _transport;
 
         // private string authorization;
@@ -141,7 +148,8 @@ namespace kinetica
         {
             Url = url_str;
             URL = new Uri( url_str );
-            _transport = new HttpWebRequestTransport();
+            _transport = new HttpClientTransport(
+                TimeSpan.FromSeconds( options?.TimeoutSeconds ?? 100 ) );
             if ( null != options ) // If caller specified options
             {
                 Username = options.Username;
@@ -479,56 +487,47 @@ namespace kinetica
         /// <returns>RawKineticaResponse Object</returns>
         private RawKineticaResponse? SubmitRequestRaw(string url, byte[] requestBytes, bool enableCompression, bool avroEncoding, bool only_endpoint_given = true)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(Kinetica));
+
+            if ( only_endpoint_given )
+                url = (Url + url);
+
+            var contentType = avroEncoding ? "application/octet-stream" : "application/json";
+
             try
             {
-                if ( only_endpoint_given )
-                    url = (Url + url);
-
-                var contentType = avroEncoding ? "application/octet-stream" : "application/json";
-                var responseBytes = _transport.Post(url, requestBytes, contentType, Authorization);
-
-                if ( avroEncoding )
-                {
-                    return AvroDecode<RawKineticaResponse>( responseBytes );
-                }
-                else // JSON
-                {
-                    var responseString = Encoding.UTF8.GetString( responseBytes ).Replace( "\\U", "\\u" );
-                    return JsonConvert.DeserializeObject<RawKineticaResponse>( responseString );
-                }
+                var responseBytes = _transport.Post(
+                    url, requestBytes, contentType, Authorization, CancellationToken.None);
+                return DecodeResponse(responseBytes, avroEncoding);
             }
-            catch (System.Net.WebException ex)
+            catch (KineticaTransportException ex)
             {
-                // Skip trying parsing the message if not a protocol error
-                if ( ex.Status != WebExceptionStatus.ProtocolError )
-                    throw new KineticaException( ex.ToString(), ex );
-
-                // Get the error message from the server response
-                var response = ex.Response;
-                var responseStream = response.GetResponseStream();
-                RawKineticaResponse serverResponse;
-                // Decode the response packet
-                if (avroEncoding)
-                {
-                    serverResponse = AvroDecode<RawKineticaResponse>(responseStream);
-                }
-                else // JSON
-                {
-                    using (StreamReader reader = new(responseStream, Encoding.UTF8))
-                    {
-                        var responseString = reader.ReadToEnd();
-                        serverResponse = JsonConvert.DeserializeObject<RawKineticaResponse>(responseString);
-                    }
-                }
-                // Throw the error message found within the response packet
-                throw new KineticaException( serverResponse.message );
+                // The server returned a non-2xx status and included an Avro/JSON
+                // error envelope in the body — decode it to extract the message.
+                var errorEnvelope = DecodeResponse(ex.Body, avroEncoding);
+                throw new KineticaException(errorEnvelope?.message ?? ex.Message);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not KineticaException)
             {
                 throw new KineticaException(ex.ToString(), ex);
             }
+        }
 
-            return null;
+        private RawKineticaResponse? DecodeResponse(byte[] bytes, bool avroEncoding)
+        {
+            if (avroEncoding)
+                return AvroDecode<RawKineticaResponse>(bytes);
+
+            var s = Encoding.UTF8.GetString(bytes).Replace("\\U", "\\u");
+            return JsonConvert.DeserializeObject<RawKineticaResponse>(s);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            (_transport as IDisposable)?.Dispose();
+            _disposed = true;
         }
 
         private void SetDecoderIfMissing(string typeId, string label, string schemaString, IDictionary<string, IList<string>> properties)
