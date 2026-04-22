@@ -8,13 +8,15 @@ using System.Threading.Tasks;
 namespace kinetica
 {
     /// <summary>
-    /// Manages the insertion into GPUdb of large numbers of records in bulk,
-    /// with automatic batch management and support for multi-head ingest.
-    /// Use the <see cref="insert(record)"/> and <see cref="insert(List)"/>
-    /// methods to queue records for insertion, and the <see cref="flush"/>
-    /// method to ensure that all queued records have been inserted.
+    /// Retrieves records from a Kinetica table by shard key, with optional
+    /// server-side expression filtering.  Supports both synchronous
+    /// (<see cref="GetRecordsByKey"/>) and asynchronous
+    /// (<see cref="GetRecordsByKeyAsync"/>) retrieval with full cancellation
+    /// support.  Multi-head retrieval is used automatically when the server
+    /// has multiple worker nodes and the table is sharded.
     /// </summary>
-    /// <typeparam name="T">The type of object being inserted.</typeparam>
+    /// <typeparam name="T">The CLR type of the records being retrieved. Must
+    /// match the Kinetica table schema.</typeparam>
     public sealed class RecordRetriever<T> where T : new()
     {
         private readonly IKineticaClient _kdb;
@@ -22,11 +24,14 @@ namespace kinetica
         /// <summary>The underlying Kinetica client. Internal — do not call server methods directly.</summary>
         internal Kinetica KineticaDb => (Kinetica)_kdb;
 
+        /// <summary>The fully-qualified name of the Kinetica table this retriever is bound to.</summary>
         public string TableName { get; }
 
+        /// <inheritdoc cref="KineticaDb"/>
         [Obsolete("Use KineticaDb instead.")]
         public Kinetica kineticaDB => (Kinetica)_kdb;
 
+        /// <inheritdoc cref="TableName"/>
         [Obsolete("Use TableName instead.")]
         public string table_name => TableName;
         private KineticaType ktype;
@@ -36,6 +41,14 @@ namespace kinetica
 
 
         /// <summary>Creates a <see cref="RecordRetriever{T}"/> for the given table.</summary>
+        /// <param name="kdb">The <see cref="Kinetica"/> client used to communicate with the server.</param>
+        /// <param name="table_name">The fully-qualified name of the Kinetica table to retrieve from.</param>
+        /// <param name="ktype">The <see cref="KineticaType"/> describing the schema of <typeparamref name="T"/>.</param>
+        /// <param name="workers">Optional pre-built worker list for multi-head retrieval.  When
+        /// <c>null</c> or empty the retriever queries the server for worker URLs automatically.</param>
+        /// <exception cref="KineticaException">
+        /// Thrown when the server returns insufficient worker URLs for the table's shard routing table.
+        /// </exception>
         public RecordRetriever( Kinetica kdb, string table_name,
                                 KineticaType ktype,
                                 Utils.WorkerList workers = null )
@@ -161,6 +174,15 @@ namespace kinetica
         /// Retrieves records for a given shard key, optionally further limited by an
         /// additional expression.
         /// </summary>
+        /// <param name="record">A record whose shard-key fields are used to locate
+        /// the target worker and filter the query.</param>
+        /// <param name="expression">An optional server-side filter expression applied
+        /// in addition to the shard-key predicate.  Pass <c>null</c> for no extra filter.</param>
+        /// <returns>A <see cref="GetRecordsResponse{T}"/> containing the matching records.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table has no shard key, when the server returns an error,
+        /// or when the worker URL is unreachable.
+        /// </exception>
         public GetRecordsResponse<T> GetRecordsByKey( T record,
                                                       string expression = null )
         {
@@ -186,6 +208,7 @@ namespace kinetica
         }  // end GetRecordsByKey()
 
         /// <summary>Retrieves records for a given shard key.</summary>
+        /// <inheritdoc cref="GetRecordsByKey"/>
         [Obsolete("Use GetRecordsByKey instead.")]
         public GetRecordsResponse<T> getRecordsByKey( T record,
                                                       string expression = null )
@@ -193,8 +216,22 @@ namespace kinetica
 
 
         /// <summary>
-        /// Async overload of <see cref="getRecordsByKey"/>.  Cancellable, non-blocking.
+        /// Async overload of <see cref="GetRecordsByKey"/>.  Cancellable, non-blocking.
         /// </summary>
+        /// <param name="record">A record whose shard-key fields are used to locate
+        /// the target worker and filter the query.</param>
+        /// <param name="expression">An optional server-side filter expression.
+        /// Pass <c>null</c> for no extra filter.</param>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>A <see cref="GetRecordsResponse{T}"/> containing the matching records.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table has no shard key, the server returns an error,
+        /// or the worker URL is unreachable.
+        /// </exception>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> is cancelled before
+        /// the server responds.
+        /// </exception>
         public async Task<GetRecordsResponse<T>> GetRecordsByKeyAsync(
             T record,
             string expression = null,

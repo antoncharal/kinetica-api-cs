@@ -46,9 +46,9 @@ namespace kinetica.Utils
 
         /// <summary>
         /// Creates a <see cref="WorkerList"/> object and automatically populates it with the
-        /// worker URLs from GPUdb to support multi-head ingest. ( If the
-        /// specified GPUdb instance has multi-head ingest disabled, the worker
-        /// list will be empty and multi-head ingest will not be used.) Note that
+        /// worker URLs from the Kinetica server to support multi-head ingest.  If the
+        /// specified Kinetica instance has multi-head ingest disabled, the worker
+        /// list will be empty and multi-head ingest will not be used.  Note that
         /// in some cases, workers may be configured to use more than one IP
         /// address, not all of which may be accessible to the client; this
         /// constructor uses the first IP returned by the server for each worker.
@@ -57,6 +57,11 @@ namespace kinetica.Utils
         /// <param name="db">The <see cref="Kinetica"/> instance from which to
         /// obtain the worker URLs.</param>
         /// <param name="ipRegex">Optional IP regex to match.</param>
+        /// <exception cref="KineticaException">
+        /// Thrown when the server does not include the expected worker-server
+        /// configuration property in its response, or when a worker URL string
+        /// returned by the server cannot be parsed as a valid URI.
+        /// </exception>
         public WorkerList(Kinetica db, Regex? ipRegex = null)
         {
             // Get the system properties from the database server

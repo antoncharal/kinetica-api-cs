@@ -8,18 +8,40 @@ using Newtonsoft.Json.Linq;
 
 namespace kinetica
 {
+    /// <summary>
+    /// Describes the schema of a Kinetica table, including its columns and their
+    /// data types and properties.  Instances are created via the static factory
+    /// methods (<see cref="FromTable"/>, <see cref="FromTypeId"/>,
+    /// <see cref="fromDynamicSchema"/>, <see cref="fromClass"/>, <see cref="fromObject"/>)
+    /// or by passing a list of <see cref="Column"/> objects to a constructor.
+    /// </summary>
     public sealed class KineticaType
     {
+        /// <summary>
+        /// Describes a single column in a Kinetica table schema: its name, data type,
+        /// nullability, and optional column properties (e.g. <c>dict_encoding</c>,
+        /// <c>nullable</c>).
+        /// </summary>
         public sealed class Column
         {
+            /// <summary>
+            /// The Avro-mapped column data types supported by Kinetica.
+            /// </summary>
             public enum ColumnType
             {
+                /// <summary>Binary data (Avro <c>bytes</c>).</summary>
                 BYTES = Schema.Type.Bytes,
+                /// <summary>64-bit IEEE 754 floating-point (Avro <c>double</c>).</summary>
                 DOUBLE = Schema.Type.Double,
+                /// <summary>32-bit IEEE 754 floating-point (Avro <c>float</c>).</summary>
                 FLOAT = Schema.Type.Float,
+                /// <summary>32-bit signed integer (Avro <c>int</c>).</summary>
                 INT = Schema.Type.Int,
+                /// <summary>64-bit signed integer (Avro <c>long</c>).</summary>
                 LONG = Schema.Type.Long,
+                /// <summary>Unicode character string (Avro <c>string</c>).</summary>
                 STRING = Schema.Type.String,
+                /// <summary>Placeholder for unrecognised or unset column types. Not valid for use in a table schema.</summary>
                 DEFAULT = Schema.Type.Error
             };
 
@@ -29,11 +51,21 @@ namespace kinetica
             private IList<string> _properties;
 
             /// <summary>
-            /// Creates a Column object from the given name, type, and properties.
+            /// Creates a <see cref="Column"/> with the specified name, data type, and optional properties.
             /// </summary>
-            /// <param name="name"></param>
-            /// <param name="type"></param>
-            /// <param name="properties"></param>
+            /// <param name="name">The column name. Must not be null or empty.</param>
+            /// <param name="type">The Avro-mapped column type. Must be one of
+            /// <see cref="ColumnType.BYTES"/>, <see cref="ColumnType.DOUBLE"/>,
+            /// <see cref="ColumnType.FLOAT"/>, <see cref="ColumnType.INT"/>,
+            /// <see cref="ColumnType.LONG"/>, or <see cref="ColumnType.STRING"/>.</param>
+            /// <param name="properties">Optional Kinetica column properties (e.g.
+            /// <c>dict_encoding</c>, <c>nullable</c>). Pass <c>null</c> or omit for
+            /// no properties. Individual property strings must not be null or empty.</param>
+            /// <exception cref="ArgumentException">
+            /// Thrown when <paramref name="name"/> is null or empty, when
+            /// <paramref name="type"/> is <see cref="ColumnType.DEFAULT"/> (unsupported),
+            /// or when any entry in <paramref name="properties"/> is null or empty.
+            /// </exception>
             public Column(string name, ColumnType type, IList<string>? properties = null)
             {
                 _name = name;
@@ -47,28 +79,28 @@ namespace kinetica
             /// <summary>Gets the name of the column.</summary>
             public string Name => _name;
 
-            /// <summary>Returns the name of the column.</summary>
+            /// <inheritdoc cref="Name"/>
             [Obsolete("Use the Name property instead.")]
             public string getName() { return _name; }
 
             /// <summary>Gets the enumeration for the column type.</summary>
             public ColumnType Type => _type;
 
-            /// <summary>Returns the enumeration for the column type.</summary>
+            /// <inheritdoc cref="Type"/>
             [Obsolete("Use the Type property instead.")]
             public ColumnType getType() { return _type; }
 
             /// <summary>Indicates whether the column is nullable.</summary>
             public bool IsNullable => _isNullable;
 
-            /// <summary>Returns if the column is nullable.</summary>
+            /// <inheritdoc cref="IsNullable"/>
             [Obsolete("Use the IsNullable property instead.")]
             public bool isNullable() { return _isNullable; }
 
             /// <summary>Gets the properties for the column.</summary>
             public IReadOnlyList<string> Properties => (IReadOnlyList<string>)_properties;
 
-            /// <summary>Returns the properties for the column.</summary>
+            /// <inheritdoc cref="Properties"/>
             [Obsolete("Use the Properties property instead.")]
             public IList<string> getProperties() { return _properties; }
 
@@ -77,7 +109,7 @@ namespace kinetica
             /// <summary>Gets the string format of the data type.</summary>
             public string TypeString => getTypeString();
 
-            /// <summary>Returns the string format of the data type.</summary>
+            /// <inheritdoc cref="TypeString"/>
             [Obsolete("Use the TypeString property instead.")]
             public string getTypeString()
             {
@@ -128,6 +160,10 @@ namespace kinetica
                 }
             }
 
+            /// <summary>
+            /// Returns a short diagnostic string in the form <c>name (type)</c>.
+            /// </summary>
+            /// <returns>A string combining the column name and its <see cref="ColumnType"/>.</returns>
             public override string ToString()
             {
                 return $"{_name} ({_type})";
@@ -148,11 +184,23 @@ namespace kinetica
         private IDictionary<string, IList<string>> _properties = new Dictionary<string, IList<string>>();
         private string? _typeId = null;
 
-        /// <summary>Create a <see cref="KineticaType"/> based on an existing table in the database.</summary>
+        /// <summary>
+        /// Creates a <see cref="KineticaType"/> that matches the schema of an existing
+        /// Kinetica table.
+        /// </summary>
+        /// <param name="kinetica">The connected <see cref="Kinetica"/> client.</param>
+        /// <param name="tableName">The fully-qualified name of the table (e.g.
+        /// <c>schema.table_name</c>).</param>
+        /// <returns>A <see cref="KineticaType"/> populated with the table's column
+        /// definitions, type label, schema, and type ID.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table does not exist or when the table contains records
+        /// of more than one type (heterogeneous table).
+        /// </exception>
         public static KineticaType FromTable(Kinetica kinetica, string tableName)
             => fromTable(kinetica, tableName);
 
-        /// <summary>Create a <see cref="KineticaType"/> based on an existing table in the database.</summary>
+        /// <inheritdoc cref="FromTable"/>
         [Obsolete("Use FromTable instead.")]
         public static KineticaType fromTable(Kinetica kinetica, string tableName)
         {
@@ -179,11 +227,22 @@ namespace kinetica
             return new KineticaType(response.type_labels[0], response.type_schemas[0], response.properties[0], typeId );
         }
 
-        /// <summary>Create a <see cref="KineticaType"/> based on an existing type ID in the database.</summary>
+        /// <summary>
+        /// Creates a <see cref="KineticaType"/> from a type ID that already exists in
+        /// the Kinetica type catalogue.
+        /// </summary>
+        /// <param name="kinetica">The connected <see cref="Kinetica"/> client.</param>
+        /// <param name="typeId">The server-assigned type ID string.</param>
+        /// <returns>A <see cref="KineticaType"/> populated from the server's type
+        /// definition for the given ID.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when no type with the given <paramref name="typeId"/> exists in
+        /// the Kinetica catalogue.
+        /// </exception>
         public static KineticaType FromTypeId(Kinetica kinetica, string typeId)
             => fromTypeID(kinetica, typeId);
 
-        /// <summary>Create a <see cref="KineticaType"/> based on an existing type in the database.</summary>
+        /// <inheritdoc cref="FromTypeId"/>
         [Obsolete("Use FromTypeId instead.")]
         public static KineticaType fromTypeID(Kinetica kinetica, string typeId)
         {
@@ -198,8 +257,21 @@ namespace kinetica
         }
 
         /// <summary>
-        /// Async overload of <see cref="fromTable"/>.  Cancellable, non-blocking.
+        /// Async overload of <see cref="FromTable"/>. Cancellable, non-blocking.
         /// </summary>
+        /// <param name="kinetica">The connected <see cref="Kinetica"/> client.</param>
+        /// <param name="tableName">The fully-qualified name of the table.</param>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>A <see cref="KineticaType"/> populated with the table's column
+        /// definitions, type label, schema, and type ID.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table does not exist or contains records of more than
+        /// one type.
+        /// </exception>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> is cancelled before
+        /// the server responds.
+        /// </exception>
         public static async Task<KineticaType> FromTableAsync(
             Kinetica kinetica,
             string tableName,
@@ -228,8 +300,21 @@ namespace kinetica
         }
 
         /// <summary>
-        /// Async overload of <see cref="fromTypeID"/>.  Cancellable, non-blocking.
+        /// Async overload of <see cref="FromTypeId"/>. Cancellable, non-blocking.
         /// </summary>
+        /// <param name="kinetica">The connected <see cref="Kinetica"/> client.</param>
+        /// <param name="typeId">The server-assigned type ID string.</param>
+        /// <param name="cancellationToken">Token to cancel the operation.</param>
+        /// <returns>A <see cref="KineticaType"/> populated from the server's type
+        /// definition for the given ID.</returns>
+        /// <exception cref="KineticaException">
+        /// Thrown when no type with the given <paramref name="typeId"/> exists in
+        /// the Kinetica catalogue.
+        /// </exception>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> is cancelled before
+        /// the server responds.
+        /// </exception>
         public static async Task<KineticaType> FromTypeIDAsync(
             Kinetica kinetica,
             string typeId,
@@ -377,7 +462,9 @@ namespace kinetica
         /// </summary>
         /// <param name="recordClass">A class type.</param>
         /// <param name="properties">Properties for the columns.</param>
-        /// <returns></returns>
+        /// <returns>A <see cref="KineticaType"/> whose columns mirror the public
+        /// properties of <paramref name="recordClass"/>, with types and nullability
+        /// inferred from the CLR property types.</returns>
         public static KineticaType fromClass( Type recordClass, IDictionary<string, IList<string>> properties = null )
         {
             return fromClass( recordClass, "", properties );
@@ -392,7 +479,9 @@ namespace kinetica
         /// <param name="recordClass">A class type.</param>
         /// <param name="label">Any label for the type.</param>
         /// <param name="properties">Properties for the columns.</param>
-        /// <returns></returns>
+        /// <returns>A <see cref="KineticaType"/> whose columns mirror the public
+        /// properties of <paramref name="recordClass"/>, labeled with
+        /// <paramref name="label"/>.</returns>
         public static KineticaType fromClass( Type recordClass, string label, IDictionary<string, IList<string>>? properties = null )
         {
             // Get the fields in order (******skipping properties inherited from base classes******)
@@ -502,7 +591,8 @@ namespace kinetica
         /// </summary>
         /// <param name="recordObj">A record object.</param>
         /// <param name="properties">Properties for the columns.</param>
-        /// <returns></returns>
+        /// <returns>A <see cref="KineticaType"/> whose columns mirror the public
+        /// properties of <paramref name="recordObj"/>'s runtime type.</returns>
         public static KineticaType fromObject( Object recordObj, IDictionary<string, IList<string>> properties = null )
         {
             return fromObject( recordObj, "", properties );
@@ -517,7 +607,9 @@ namespace kinetica
         /// <param name="recordObj">A record object.</param>
         /// <param name="label">Any label for the type.</param>
         /// <param name="properties">Properties for the columns.</param>
-        /// <returns></returns>
+        /// <returns>A <see cref="KineticaType"/> whose columns mirror the public
+        /// properties of <paramref name="recordObj"/>'s runtime type, labeled
+        /// with <paramref name="label"/>.</returns>
         public static KineticaType fromObject(Object recordObj, string label = "", IDictionary<string, IList<string>> properties = null)
         {
             // Create the type schema from the object
@@ -588,6 +680,7 @@ namespace kinetica
             CreateSchema();
         }
 
+        /// <summary>Gets the label of this type, or <c>null</c> if no label was assigned.</summary>
         public string getLabel() { return _data.label; }
 
         /// <summary>Gets the list of columns in this type.</summary>
@@ -608,20 +701,46 @@ namespace kinetica
         /// <summary>Returns true if this type contains a column with the given name.</summary>
         public bool ContainsColumn(string name) => _data.columnMap.ContainsKey(name);
 
+        /// <inheritdoc cref="Columns"/>
         [Obsolete("Use Columns property instead.")]
         public IList<Column> getColumns() { return _data.columns; }
+
+        /// <summary>Gets the column at the specified zero-based index.</summary>
+        /// <param name="index">Zero-based column index.</param>
+        /// <returns>The <see cref="Column"/> at position <paramref name="index"/>.</returns>
         public Column getColumn(int index) { return _data.columns[index]; }
+
+        /// <summary>Gets the column with the specified name.</summary>
+        /// <param name="name">The column name (case-sensitive).</param>
+        /// <returns>The matching <see cref="Column"/>.</returns>
         public Column getColumn(string name) { return _data.columns[getColumnIndex(name)]; }
+
+        /// <inheritdoc cref="ColumnCount"/>
         [Obsolete("Use ColumnCount property instead.")]
         public int getColumnCount() { return _data.columns.Count; }
+
+        /// <summary>Returns the zero-based index of the column with the given name.</summary>
+        /// <param name="name">The column name (case-sensitive).</param>
+        /// <returns>Zero-based column index.</returns>
         public int getColumnIndex(string name) { return _data.columnMap[name]; }
+
+        /// <inheritdoc cref="ContainsColumn"/>
         [Obsolete("Use ContainsColumn instead.")]
         public bool hasColumn(string name) { return _data.columnMap.ContainsKey(name); }
+
+        /// <inheritdoc cref="AvroSchema"/>
         [Obsolete("Use AvroSchema property instead.")]
         public Schema getSchema() { return _data.schema; }
+
+        /// <summary>Returns the CLR <see cref="System.Type"/> registered as the source type for
+        /// this schema, or <c>null</c> if no source type has been registered.</summary>
         public Type? getSourceType() { return _data.sourceType; }
+
+        /// <inheritdoc cref="SchemaString"/>
         [Obsolete("Use SchemaString property instead.")]
         public string getSchemaString() { return _data.schemaString; }
+
+        /// <inheritdoc cref="TypeId"/>
         [Obsolete("Use TypeId property instead.")]
         public string getTypeID() { return _typeId; }
 

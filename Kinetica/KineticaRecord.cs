@@ -13,6 +13,11 @@ namespace kinetica
     /// </summary>
     public class KineticaRecord : Avro.Generic.GenericRecord
     {
+        /// <summary>
+        /// Creates a <see cref="KineticaRecord"/> backed by the given Avro record schema.
+        /// </summary>
+        /// <param name="schema">The Avro <see cref="RecordSchema"/> that defines the
+        /// fields of this record.</param>
         public KineticaRecord( RecordSchema schema ) : base( schema ) {}
 
         /// <summary>

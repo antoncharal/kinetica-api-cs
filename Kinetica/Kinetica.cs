@@ -9,35 +9,33 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-/// \mainpage Introduction
-///
-/// This is the client-side C# application programming interface (API) for Kinetica.
-///
-/// <br/>
-///
-/// The source code can be found <a href="https://github.com/kineticadb/kinetica-api-cs" target="_top">here</a>.
-///
-/// <br/>
-///
-/// There are two projects here: Kinetica and Example.
-/// <br/>
-///
-/// The Kinetica project contains the main client source code in the kinetica namespace.
-/// The <see cref="kinetica.Kinetica">Kinetica</see> class implements the interface for the API.  The Protocol
-/// subdirectory contains classes for each endpoint of the database server.
-///
-/// <br/>
-///
-/// The Example project contains a short example <see cref="Example.Example">here</see>.  The user
-/// needs to specify the hostname of a database server (e.g. "127.0.0.1:9191") in the property
-/// to properly run it.
-///
-
 namespace kinetica
 {
     /// <summary>
-    /// API to talk to Kinetica Database
+    /// C# client API for the Kinetica database.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the client-side C# application programming interface (API) for Kinetica.
+    /// The source code is hosted at
+    /// <a href="https://github.com/kineticadb/kinetica-api-cs">https://github.com/kineticadb/kinetica-api-cs</a>.
+    /// </para>
+    /// <para>
+    /// The solution contains two projects:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <b>Kinetica</b> — the main client library in the <c>kinetica</c> namespace.
+    ///     <see cref="Kinetica"/> implements the full API surface.  The
+    ///     <c>Protocol/</c> subdirectory contains request/response classes for every
+    ///     server endpoint.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Example</b> — a short usage example.  Specify the hostname of a Kinetica
+    ///     server (e.g. <c>http://127.0.0.1:9191</c>) before running it.
+    ///   </description></item>
+    /// </list>
+    /// </para>
+    /// </remarks>
     public sealed partial class Kinetica : IDisposable, IKineticaClient
     {
         private bool _disposed;
@@ -214,6 +212,10 @@ namespace kinetica
         /// </summary>
         /// <param name="tableName">Name of the table.</param>
         /// <param name="obj_type">The type associated with the table.</param>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table does not exist, the server cannot return a type ID
+        /// for the table, or the server returns an error during the type lookup.
+        /// </exception>
         public void AddTableType( string tableName, Type obj_type )
         {
             try
@@ -240,6 +242,14 @@ namespace kinetica
         /// <param name="tableName">The table to discover the type from.</param>
         /// <param name="obj_type">The CLR type to associate with the discovered Kinetica type.</param>
         /// <param name="cancellationToken">Token to cancel the async operation.</param>
+        /// <exception cref="KineticaException">
+        /// Thrown when the table does not exist, the server cannot return a type ID
+        /// for the table, or the server returns an error during the type lookup.
+        /// </exception>
+        /// <exception cref="OperationCanceledException">
+        /// Thrown when <paramref name="cancellationToken"/> is cancelled before
+        /// the server responds.
+        /// </exception>
         public async Task AddTableTypeAsync(
             string tableName,
             Type obj_type,
@@ -662,6 +672,7 @@ namespace kinetica
             return DecodeKineticaResponse<TResponse>(raw, avroEncoding);
         }
 
+        /// <inheritdoc />
         public void Dispose()
         {
             if (_disposed) return;

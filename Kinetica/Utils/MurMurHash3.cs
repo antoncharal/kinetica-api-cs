@@ -25,7 +25,10 @@ namespace kinetica
         /** 128 bits of state */
         public class LongPair
         {
+            /// <summary>The low 64 bits of the 128-bit hash value.</summary>
             public long val1 { get; set; }
+
+            /// <summary>The high 64 bits of the 128-bit hash value.</summary>
             public long val2 { get; set; }
         }
 

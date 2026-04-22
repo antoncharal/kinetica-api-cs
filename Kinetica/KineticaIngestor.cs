@@ -8,11 +8,15 @@ using System.Threading.Tasks;
 namespace kinetica
 {
     /// <summary>
-    /// Manages the insertion into GPUdb of large numbers of records in bulk,
-    /// with automatic batch management and support for multi-head ingest.
-    /// Use the <see cref="insert(record)"/> and <see cref="insert(List)"/>
-    /// methods to queue records for insertion, and the <see cref="flush"/>
-    /// method to ensure that all queued records have been inserted.
+    /// Manages the bulk insertion of records into a Kinetica table with automatic
+    /// batch management and support for multi-head ingest.
+    /// <para>
+    /// Use <see cref="Insert(T)"/> / <see cref="Insert(IList{T})"/> to queue records
+    /// for insertion, <see cref="Flush"/> to drain all queued records synchronously,
+    /// or the async equivalents (<see cref="InsertAsync(T, CancellationToken)"/>,
+    /// <see cref="InsertAsync(IList{T}, CancellationToken)"/>, <see cref="FlushAsync"/>)
+    /// for non-blocking operation.
+    /// </para>
     /// <para>
     /// <b>Thread safety:</b> Concurrent calls to <see cref="InsertAsync(T, CancellationToken)"/>
     /// and <see cref="InsertAsync(IList{T}, CancellationToken)"/> are safe.
@@ -23,7 +27,9 @@ namespace kinetica
     /// per worker queue.
     /// </para>
     /// </summary>
-    /// <typeparam name="T">The type of object being inserted.</typeparam>
+    /// <typeparam name="T">The CLR type of the records being inserted. Must match the
+    /// Kinetica table schema described by the <see cref="KineticaType"/> passed at
+    /// construction time.</typeparam>
     public sealed class KineticaIngestor<T>
     {
         /// <summary>
@@ -42,15 +48,25 @@ namespace kinetica
         [Serializable]
         public class InsertException : KineticaException
         {
+            /// <summary>The worker URL that rejected the batch.</summary>
             public Uri Url { get; private set; }
+
+            /// <summary>The records that were not delivered to the server.</summary>
             public IReadOnlyList<T> Records { get; private set; }
 
+            /// <inheritdoc cref="Url"/>
             [Obsolete("Use Url instead.")]
             public Uri url => Url;
 
+            /// <inheritdoc cref="Records"/>
             [Obsolete("Use Records instead.")]
             public IList<T> records => (IList<T>)Records;
 
+            /// <summary>
+            /// Initialises an <see cref="InsertException"/> with the specified message
+            /// and no record or URL context.
+            /// </summary>
+            /// <param name="msg">A human-readable description of the insert failure.</param>
             public InsertException( string msg ) : base( msg ) { }
 
             internal InsertException( Uri url_, IList<T> records_, string msg ) : base( msg )
@@ -77,7 +93,11 @@ namespace kinetica
         /// public insertion methods rather than reaching into the client directly.
         /// </summary>
         internal Kinetica KineticaDb => (Kinetica)_kdb;
+
+        /// <summary>The fully-qualified name of the target Kinetica table.</summary>
         public string TableName { get; }
+
+        /// <summary>The number of records to accumulate per worker queue before an automatic flush.</summary>
         public int BatchSize { get; }
 
         /// <summary>
@@ -89,12 +109,15 @@ namespace kinetica
         [Obsolete("Use KineticaDb instead.")]
         internal Kinetica kineticaDB => (Kinetica)_kdb;
 
+        /// <inheritdoc cref="TableName"/>
         [Obsolete("Use TableName instead.")]
         public string table_name => TableName;
 
+        /// <inheritdoc cref="BatchSize"/>
         [Obsolete("Use BatchSize instead.")]
         public int batch_size => BatchSize;
 
+        /// <inheritdoc cref="Options"/>
         [Obsolete("Use Options instead.")]
         public IDictionary<string, string> options => _options;
         private long _countInserted;
@@ -115,6 +138,19 @@ namespace kinetica
         /// <summary>
         /// Creates a <see cref="KineticaIngestor{T}"/> with the specified parameters.
         /// </summary>
+        /// <param name="kdb">The <see cref="Kinetica"/> client used to communicate with the server.</param>
+        /// <param name="tableName">The fully-qualified name of the target Kinetica table.</param>
+        /// <param name="batchSize">The number of records to accumulate per worker queue before
+        /// automatically flushing.  Must be ≥ 1.</param>
+        /// <param name="ktype">The <see cref="KineticaType"/> describing the schema of <typeparamref name="T"/>.</param>
+        /// <param name="options">Optional insert options forwarded to the <c>/insert/records</c>
+        /// endpoint (e.g. <c>update_on_existing_pk</c>).  Pass <c>null</c> for defaults.</param>
+        /// <param name="workers">Optional pre-built worker list for multi-head ingest.  When
+        /// <c>null</c> or empty the ingestor queries the server for worker URLs automatically.</param>
+        /// <exception cref="KineticaException">
+        /// Thrown when <paramref name="batchSize"/> is less than 1, or when the server returns
+        /// an error while fetching worker information.
+        /// </exception>
         public KineticaIngestor( Kinetica kdb, string tableName,
                                  int batchSize, KineticaType ktype,
                                  Dictionary<string, string>? options = null,
@@ -276,6 +312,11 @@ namespace kinetica
         /// <summary>
         /// Ensures that all queued records are inserted into Kinetica.
         /// </summary>
+        /// <exception cref="InsertException">
+        /// Thrown when one or more records cannot be delivered to the server.
+        /// The exception carries the undelivered records and the worker URL that
+        /// failed, allowing callers to re-queue or log the failures.
+        /// </exception>
         public void Flush()
         {
             foreach ( Utils.WorkerQueue<T> workerQueue in this.workerQueues )
