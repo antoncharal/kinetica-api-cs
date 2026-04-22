@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 
 namespace kinetica
@@ -347,10 +349,138 @@ namespace kinetica
         }  // end insert( records )
 
 
+        // -------------------------------------------------------------------------
+        // Async API
+        // -------------------------------------------------------------------------
+
+        /// <summary>
+        /// Ensures all queued records are flushed asynchronously.
+        /// </summary>
+        public async Task<IngestionResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            long totalInserted  = 0;
+            long totalUpdated   = 0;
+            int  flushedBatches = 0;
+
+            foreach (Utils.WorkerQueue<T> workerQueue in this.workerQueues)
+            {
+                var queue = workerQueue.flush();
+                var result = await FlushAsync(queue, workerQueue.url, cancellationToken)
+                    .ConfigureAwait(false);
+                totalInserted  += result.Inserted;
+                totalUpdated   += result.Updated;
+                flushedBatches += result.FlushedBatches;
+            }
+
+            return new IngestionResult(totalInserted, totalUpdated, flushedBatches);
+        }
+
+        private async Task<IngestionResult> FlushAsync(
+            IList<T> queue,
+            Uri url,
+            CancellationToken cancellationToken)
+        {
+            if (queue.Count == 0)
+                return new IngestionResult(0, 0, 0);
+
+            try
+            {
+                List<byte[]> encodedQueue = [];
+                foreach (var record in queue)
+                    encodedQueue.Add(this.kineticaDB.AvroEncode(record));
+
+                var request = new RawInsertRecordsRequest(this.table_name, encodedQueue, this.options);
+
+                InsertRecordsResponse response;
+                if (url == null)
+                {
+                    response = await this.kineticaDB
+                        .SubmitRequestAsync<InsertRecordsResponse>("/insert/records", request,
+                            enableCompression: true, cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    response = await this.kineticaDB
+                        .SubmitRequestAsync<InsertRecordsResponse>(url, request,
+                            cancellationToken: cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                System.Threading.Interlocked.Add(ref this.count_inserted, response.count_inserted);
+                System.Threading.Interlocked.Add(ref this.count_updated, response.count_updated);
+
+                return new IngestionResult(response.count_inserted, response.count_updated, 1);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new InsertException<T>(url, queue, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Queues <paramref name="record"/> for insertion.  If the queue reaches
+        /// the batch size, flushes asynchronously before returning.
+        /// </summary>
+        public async Task InsertAsync(T record, CancellationToken cancellationToken = default)
+        {
+            Utils.RecordKey? primaryKey = null;
+            Utils.RecordKey? shardKey   = null;
+
+            if (this.primaryKeyBuilder != null)
+                primaryKey = this.primaryKeyBuilder.build(record);
+            if (this.shardKeyBuilder != null)
+                shardKey = this.shardKeyBuilder.build(record);
+
+            Utils.WorkerQueue<T> workerQueue;
+            if (this.routingTable == null)
+                workerQueue = this.workerQueues[0];
+            else if (shardKey == null)
+                workerQueue = this.workerQueues[random.Next(this.workerQueues.Count)];
+            else
+                workerQueue = this.workerQueues[shardKey.route(this.routingTable)];
+
+            var queue = workerQueue.insert(record, primaryKey);
+            if (queue != null)
+                await FlushAsync(queue, workerQueue.url, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Queues each record for insertion asynchronously.
+        /// </summary>
+        public async Task InsertAsync(IList<T> records, CancellationToken cancellationToken = default)
+        {
+            for (int i = 0; i < records.Count; ++i)
+            {
+                try
+                {
+                    await InsertAsync(records[i], cancellationToken).ConfigureAwait(false);
+                }
+                catch (InsertException<T> ex)
+                {
+                    for (int j = i + 1; j < records.Count; ++j)
+                        ex.records.Add(records[j]);
+                    throw;
+                }
+            }
+        }
+
+
 
     }  // end class KineticaIngestor<T>
 
 
+    /// <summary>
+    /// Result returned by <see cref="KineticaIngestor{T}.FlushAsync"/>.
+    /// </summary>
+    public readonly record struct IngestionResult(
+        long Inserted,
+        long Updated,
+        int FlushedBatches);
 
 
 }  // end namespace kinetica
